@@ -1,0 +1,4 @@
+interface:
+  display_name: "YouTube 本地媒体处理"
+  short_description: "探测、提取并裁剪本地视频和音频媒体工件，保留源文件。"
+  default_prompt: "使用 $youtube-local-media 处理本地视频或音频素材。"

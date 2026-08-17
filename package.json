@@ -1,0 +1,32 @@
+{
+  "name": "ytops",
+  "version": "0.1.0",
+  "private": true,
+  "description": "安全、可脚本化的 YouTube 调研、媒体处理与频道运营辅助 CLI。",
+  "type": "module",
+  "bin": {
+    "ytops": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "execa": "^10.0.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "YouTube 授权媒体处理"
+  short_description: "安全准备已获授权的 YouTube 媒体与字幕文件。"
+  default_prompt: "使用 $youtube-authorized-media 为已获授权内容准备媒体工件。"

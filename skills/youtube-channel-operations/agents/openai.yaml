@@ -1,0 +1,4 @@
+interface:
+  display_name: "YouTube 频道运营"
+  short_description: "检查 OAuth 就绪度并规划受控的频道运营操作。"
+  default_prompt: "使用 $youtube-channel-operations 检查频道运营准备情况并制定发布计划。"

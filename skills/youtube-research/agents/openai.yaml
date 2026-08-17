@@ -1,0 +1,4 @@
+interface:
+  display_name: "YouTube 内容调研"
+  short_description: "搜索、检查并评估公开 YouTube 视频证据与字幕信息。"
+  default_prompt: "使用 $youtube-research 检索指定主题并整理视频候选。"
