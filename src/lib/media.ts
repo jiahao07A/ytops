@@ -22,31 +22,60 @@ async function runFfmpeg(args: string[]): Promise<void> {
   try {
     result = await runCommand("ffmpeg", args);
   } catch {
-    throw new UserInputError("找不到 ffmpeg。请先安装并确认它位于 PATH 中，然后运行 ytops doctor。");
+    throw new UserInputError(
+      "找不到 ffmpeg。请先安装并确认它位于 PATH 中，然后运行 ytops doctor。",
+    );
   }
 
   if (result.exitCode !== 0) {
-    throw new ExternalCommandError(result.command, result.args, result.exitCode, result.stderr);
+    throw new ExternalCommandError(
+      result.command,
+      result.args,
+      result.exitCode,
+      result.stderr,
+    );
   }
 }
 
-export async function probeMedia(input: string): Promise<Record<string, unknown>> {
+export async function probeMedia(
+  input: string,
+): Promise<Record<string, unknown>> {
   await assertReadableFile(input);
   let result;
   try {
-    result = await runCommand("ffprobe", ["-v", "error", "-show_format", "-show_streams", "-of", "json", input]);
+    result = await runCommand("ffprobe", [
+      "-v",
+      "error",
+      "-show_format",
+      "-show_streams",
+      "-of",
+      "json",
+      input,
+    ]);
   } catch {
-    throw new UserInputError("找不到 ffprobe。请确认 FFmpeg 已完整安装并位于 PATH 中。");
+    throw new UserInputError(
+      "找不到 ffprobe。请确认 FFmpeg 已完整安装并位于 PATH 中。",
+    );
   }
 
   if (result.exitCode !== 0) {
-    throw new ExternalCommandError(result.command, result.args, result.exitCode, result.stderr);
+    throw new ExternalCommandError(
+      result.command,
+      result.args,
+      result.exitCode,
+      result.stderr,
+    );
   }
 
   try {
     return JSON.parse(result.stdout) as Record<string, unknown>;
   } catch {
-    throw new ExternalCommandError(result.command, result.args, result.exitCode, "ffprobe did not return valid JSON.");
+    throw new ExternalCommandError(
+      result.command,
+      result.args,
+      result.exitCode,
+      "ffprobe did not return valid JSON.",
+    );
   }
 }
 

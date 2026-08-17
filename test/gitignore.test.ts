@@ -18,9 +18,13 @@ const sensitiveFiles = [
 
 describe("credential ignore rules", () => {
   it.each(sensitiveFiles)("ignores %s", (filename) => {
-    const result = spawnSync("git", ["check-ignore", "--no-index", "-q", "--", filename], {
-      cwd: process.cwd(),
-    });
+    const result = spawnSync(
+      "git",
+      ["check-ignore", "--no-index", "-q", "--", filename],
+      {
+        cwd: process.cwd(),
+      },
+    );
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);

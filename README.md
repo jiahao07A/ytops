@@ -26,16 +26,16 @@ CLI 是唯一执行层，适合长下载、转码、批处理、日志和文件�
 
 ## 当前能力
 
-| 命令 | 作用 | 外部工具 |
-| --- | --- | --- |
-| `doctor` | 检查必需与可选工具，以及安全默认值 | `yt-dlp`、FFmpeg 等 |
-| `search` | 搜索公开视频并返回精简 JSON | `yt-dlp` |
-| `inspect` | 读取单视频元数据，不下载媒体 | `yt-dlp` |
-| `captions list` | 查看人工/自动字幕语言 | `yt-dlp` |
-| `captions fetch` | 将已获授权的字幕写入指定目录 | `yt-dlp` |
-| `download video/audio` | 下载已获授权的媒体 | `yt-dlp` + FFmpeg |
-| `process probe/audio/clip` | 探测、抽音频、裁剪本地媒体 | FFmpeg / ffprobe |
-| `ops doctor` | 检查后续官方 OAuth 运营接入的环境 | 可选发布工具 + 环境变量 |
+| 命令                       | 作用                               | 外部工具                |
+| -------------------------- | ---------------------------------- | ----------------------- |
+| `doctor`                   | 检查必需与可选工具，以及安全默认值 | `yt-dlp`、FFmpeg 等     |
+| `search`                   | 搜索公开视频并返回精简 JSON        | `yt-dlp`                |
+| `inspect`                  | 读取单视频元数据，不下载媒体       | `yt-dlp`                |
+| `captions list`            | 查看人工/自动字幕语言              | `yt-dlp`                |
+| `captions fetch`           | 将已获授权的字幕写入指定目录       | `yt-dlp`                |
+| `download video/audio`     | 下载已获授权的媒体                 | `yt-dlp` + FFmpeg       |
+| `process probe/audio/clip` | 探测、抽音频、裁剪本地媒体         | FFmpeg / ffprobe        |
+| `ops doctor`               | 检查后续官方 OAuth 运营接入的环境  | 可选发布工具 + 环境变量 |
 
 ## 快速开始
 
@@ -65,16 +65,27 @@ node .\dist\cli.js process clip "D:\media\input.mp4" --start 00:01:05 --end 00:0
 
 将 `--json` 放在子命令前，供后续 skills、脚本和 MCP 适配层消费，例如 `node .\dist\cli.js --json doctor`。JSON 调用必须在单独完成 `npm run build` 后直接运行 `node .\dist\cli.js`，不要使用 `npm run start` 包装。
 
+## 开发验证
+
+```powershell
+npm run format:check # 只检查格式
+npm run check        # TypeScript 类型检查
+npm run test         # 构建后运行 Vitest
+npm run verify       # 格式、类型检查和测试的完整质量门禁
+```
+
+需要自动修正格式时运行 `npm run format`。项目当前使用 TypeScript 7；由于当前 `typescript-eslint` 尚不兼容该版本，本项目暂以 Prettier、`tsc --noEmit` 和 Vitest 组成质量基线，不引入会在导入时失败的 TypeScript linter。详细技能和工程工作流见 [docs/skills/mattpocock-installed-skills.md](docs/skills/mattpocock-installed-skills.md)。
+
 ## Codex Skills
 
 可复用的 Codex skills 源码保存在 [skills/](skills/)，并与 CLI 一起接受版本管理和验证；在项目成熟前，它们**不会**安装到 `C:\Users\A2134\.codex\skills` 全局目录。
 
-| Skill | 用途 | 明确不做的事 |
-| --- | --- | --- |
-| `youtube-research` | 搜索、检查公开元数据与字幕语言 | 下载、Cookie、OAuth、频道写入 |
-| `youtube-authorized-media` | 为明确获授权内容下载视频、音频或字幕 | 未确认权利的下载、读取浏览器 Cookie |
-| `youtube-local-media` | 探测、抽音频、无损裁剪本地文件 | 修改/删除源文件、任意 FFmpeg 参数 |
-| `youtube-channel-operations` | 检查 OAuth 就绪度并生成运营预览计划 | 伪造上传、评论、隐私或元数据写入 |
+| Skill                        | 用途                                 | 明确不做的事                        |
+| ---------------------------- | ------------------------------------ | ----------------------------------- |
+| `youtube-research`           | 搜索、检查公开元数据与字幕语言       | 下载、Cookie、OAuth、频道写入       |
+| `youtube-authorized-media`   | 为明确获授权内容下载视频、音频或字幕 | 未确认权利的下载、读取浏览器 Cookie |
+| `youtube-local-media`        | 探测、抽音频、无损裁剪本地文件       | 修改/删除源文件、任意 FFmpeg 参数   |
+| `youtube-channel-operations` | 检查 OAuth 就绪度并生成运营预览计划  | 伪造上传、评论、隐私或元数据写入    |
 
 每个 skill 都要求通过受控的 `node .\dist\cli.js --json` 子命令执行，并把下载、凭据和频道写操作视为独立的高风险边界。验证完成后，再决定是否把它们安装为全局 skills。
 

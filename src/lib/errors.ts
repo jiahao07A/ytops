@@ -16,7 +16,9 @@ export class ExternalCommandError extends Error {
     readonly exitCode: number | undefined,
     readonly stderr: string,
   ) {
-    super(`${command} failed${exitCode === undefined ? "" : ` with exit code ${exitCode}`}.`);
+    super(
+      `${command} failed${exitCode === undefined ? "" : ` with exit code ${exitCode}`}.`,
+    );
     this.name = "ExternalCommandError";
   }
 }

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { UserInputError } from "../src/lib/errors.js";
-import { buildDownloadArguments, normalizeQuality, summarizeVideo } from "../src/lib/yt-dlp.js";
+import {
+  buildDownloadArguments,
+  normalizeQuality,
+  summarizeVideo,
+} from "../src/lib/yt-dlp.js";
 
 describe("yt-dlp command construction", () => {
   it("forces the safe configuration boundary for video downloads", () => {
@@ -33,16 +37,38 @@ describe("yt-dlp command construction", () => {
 
   it("rejects malformed quality and unsafe URL inputs before spawning yt-dlp", () => {
     expect(() => normalizeQuality("unlimited")).toThrow(UserInputError);
-    expect(() => buildDownloadArguments("video", "file:///local/video", "D:\\output", "best")).toThrow(UserInputError);
-    expect(() => buildDownloadArguments("video", "http://www.youtube.com/watch?v=dQw4w9WgXcQ", "D:\\output", "best")).toThrow(
-      UserInputError,
-    );
-    expect(() => buildDownloadArguments("video", "https://localhost/watch?v=dQw4w9WgXcQ", "D:\\output", "best")).toThrow(
-      UserInputError,
-    );
-    expect(() => buildDownloadArguments("video", "https://youtube.com.example/watch?v=dQw4w9WgXcQ", "D:\\output", "best")).toThrow(
-      UserInputError,
-    );
+    expect(() =>
+      buildDownloadArguments(
+        "video",
+        "file:///local/video",
+        "D:\\output",
+        "best",
+      ),
+    ).toThrow(UserInputError);
+    expect(() =>
+      buildDownloadArguments(
+        "video",
+        "http://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
+    ).toThrow(UserInputError);
+    expect(() =>
+      buildDownloadArguments(
+        "video",
+        "https://localhost/watch?v=dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
+    ).toThrow(UserInputError);
+    expect(() =>
+      buildDownloadArguments(
+        "video",
+        "https://youtube.com.example/watch?v=dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
+    ).toThrow(UserInputError);
     expect(() =>
       buildDownloadArguments(
         "video",
@@ -52,23 +78,55 @@ describe("yt-dlp command construction", () => {
       ),
     ).toThrow(UserInputError);
     expect(() =>
-      buildDownloadArguments("video", "https://www.youtube.com:8443/watch?v=dQw4w9WgXcQ", "D:\\output", "best"),
+      buildDownloadArguments(
+        "video",
+        "https://www.youtube.com:8443/watch?v=dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
     ).toThrow(UserInputError);
     expect(() =>
-      buildDownloadArguments("video", "https://user@www.youtube.com/watch?v=dQw4w9WgXcQ", "D:\\output", "best"),
+      buildDownloadArguments(
+        "video",
+        "https://user@www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
     ).toThrow(UserInputError);
     expect(() =>
-      buildDownloadArguments("video", "https://[::1]/watch?v=dQw4w9WgXcQ", "D:\\output", "best"),
+      buildDownloadArguments(
+        "video",
+        "https://[::1]/watch?v=dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
     ).toThrow(UserInputError);
   });
 
   it("accepts supported HTTPS single-video YouTube URL forms", () => {
-    expect(() => buildDownloadArguments("video", "https://youtu.be/dQw4w9WgXcQ", "D:\\output", "best")).not.toThrow();
     expect(() =>
-      buildDownloadArguments("video", "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", "D:\\output", "best"),
+      buildDownloadArguments(
+        "video",
+        "https://youtu.be/dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
     ).not.toThrow();
     expect(() =>
-      buildDownloadArguments("video", "https://www.youtube.com/shorts/dQw4w9WgXcQ", "D:\\output", "best"),
+      buildDownloadArguments(
+        "video",
+        "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      buildDownloadArguments(
+        "video",
+        "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+      ),
     ).not.toThrow();
   });
 });

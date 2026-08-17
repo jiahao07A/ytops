@@ -8,7 +8,11 @@ export interface ToolCheck {
   detail: string | null;
 }
 
-async function checkCommand(name: string, args: string[], required: boolean): Promise<ToolCheck> {
+async function checkCommand(
+  name: string,
+  args: string[],
+  required: boolean,
+): Promise<ToolCheck> {
   try {
     const result = await runCommand(name, args);
     const available = result.exitCode === 0;
@@ -16,8 +20,15 @@ async function checkCommand(name: string, args: string[], required: boolean): Pr
       name,
       required,
       available,
-      version: available ? (result.stdout || result.stderr).split(/\r?\n/).find(Boolean)?.trim() ?? null : null,
-      detail: available ? null : result.stderr || `退出码：${result.exitCode ?? "未知"}`,
+      version: available
+        ? ((result.stdout || result.stderr)
+            .split(/\r?\n/)
+            .find(Boolean)
+            ?.trim() ?? null)
+        : null,
+      detail: available
+        ? null
+        : result.stderr || `退出码：${result.exitCode ?? "未知"}`,
     };
   } catch {
     return {
@@ -30,7 +41,10 @@ async function checkCommand(name: string, args: string[], required: boolean): Pr
   }
 }
 
-export async function runDoctor(): Promise<{ tools: ToolCheck[]; safeDefaults: Record<string, string> }> {
+export async function runDoctor(): Promise<{
+  tools: ToolCheck[];
+  safeDefaults: Record<string, string>;
+}> {
   const tools = await Promise.all([
     checkCommand("yt-dlp", ["--version"], true),
     checkCommand("ffmpeg", ["-version"], true),

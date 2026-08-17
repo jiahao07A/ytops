@@ -3,9 +3,13 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 function runCli(args: string[]) {
-  return spawnSync(process.execPath, [resolve(process.cwd(), "dist", "cli.js"), ...args], {
-    encoding: "utf8",
-  });
+  return spawnSync(
+    process.execPath,
+    [resolve(process.cwd(), "dist", "cli.js"), ...args],
+    {
+      encoding: "utf8",
+    },
+  );
 }
 
 describe("CLI JSON error contract", () => {
@@ -30,17 +34,20 @@ describe("CLI JSON error contract", () => {
   it.each([
     ["help", ["--json", "--help"], "Usage: ytops"],
     ["version", ["--json", "--version"], "0.1.0"],
-  ])("serializes %s output without mixing human-readable stdout", (_scenario, args, expectedOutput) => {
-    const result = runCli(args);
+  ])(
+    "serializes %s output without mixing human-readable stdout",
+    (_scenario, args, expectedOutput) => {
+      const result = runCli(args);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(() => JSON.parse(result.stdout)).not.toThrow();
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      data: {
-        output: expect.stringContaining(expectedOutput),
-      },
-    });
-  });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(() => JSON.parse(result.stdout)).not.toThrow();
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        data: {
+          output: expect.stringContaining(expectedOutput),
+        },
+      });
+    },
+  );
 });

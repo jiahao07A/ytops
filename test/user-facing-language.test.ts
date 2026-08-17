@@ -21,18 +21,28 @@ function firstMatch(source: string, expression: RegExp): string {
 
 describe("面向用户的元数据语言", () => {
   it("uses Simplified Chinese for the package description", () => {
-    const packageJson = JSON.parse(readWorkspaceFile("package.json")) as { description: string };
+    const packageJson = JSON.parse(readWorkspaceFile("package.json")) as {
+      description: string;
+    };
 
     expect(packageJson.description).toMatch(/[\u4e00-\u9fff]/);
   });
 
-  it.each(skillNames)("uses Simplified Chinese for %s metadata", (skillName) => {
-    const skill = readWorkspaceFile(`skills/${skillName}/SKILL.md`);
-    const interfaceMetadata = readWorkspaceFile(`skills/${skillName}/agents/openai.yaml`);
-    const description = firstMatch(skill, /^description: (.+)$/m);
-    const shortDescription = firstMatch(interfaceMetadata, /^  short_description: "(.+)"$/m);
+  it.each(skillNames)(
+    "uses Simplified Chinese for %s metadata",
+    (skillName) => {
+      const skill = readWorkspaceFile(`skills/${skillName}/SKILL.md`);
+      const interfaceMetadata = readWorkspaceFile(
+        `skills/${skillName}/agents/openai.yaml`,
+      );
+      const description = firstMatch(skill, /^description: (.+)$/m);
+      const shortDescription = firstMatch(
+        interfaceMetadata,
+        /^  short_description: "(.+)"$/m,
+      );
 
-    expect(description).toMatch(/[\u4e00-\u9fff]/);
-    expect(shortDescription).toMatch(/[\u4e00-\u9fff]/);
-  });
+      expect(description).toMatch(/[\u4e00-\u9fff]/);
+      expect(shortDescription).toMatch(/[\u4e00-\u9fff]/);
+    },
+  );
 });
