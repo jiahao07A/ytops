@@ -23,6 +23,7 @@ skills
        -> FFmpeg / ffprobe       local media recipes
        -> YouTube Data API       channel and publishing operations
        -> YouTube Analytics API  reporting
+       -> local config contract  JSON validation, atomic writes, protected-key checks
        -> optional tools         seconv, whisper.cpp, youtubeuploader
   -> optional MCP adapter
        -> job submit/status/result, not raw flags or binary streams
@@ -37,6 +38,8 @@ skills
 | `commander`              | CLI grammar                             | NPM dependency                                                              |
 | `execa`                  | Safe child-process invocation           | NPM dependency; argument arrays only                                        |
 | `zod`                    | Boundary validation                     | NPM dependency                                                              |
+| `proper-lockfile`        | Cross-process config updates            | NPM dependency; lock before read-modify-write                               |
+| `i18n-iso-countries`     | Assigned ISO country filter validation  | NPM dependency; reject unassigned country codes                             |
 | `youtubeuploader`        | Optional upload adapter                 | Do not enable until OAuth token storage and private-video smoke tests exist |
 | `seconv` / `whisper.cpp` | Optional subtitle processing            | Add only after doctor checks and deterministic recipe tests                 |
 | `@kevinwatt/yt-dlp-mcp`  | POC reference only                      | Do not directly depend on `0.10.0` without a security patch                 |

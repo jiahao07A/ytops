@@ -1,6 +1,21 @@
 #!/usr/bin/env node
 import { Command, CommanderError } from "commander";
 import { z } from "zod";
+import {
+  type AnalysisProfileOverrides,
+  type ChannelConfigOverrides,
+  type ChannelOperationsConfigOverrides,
+  type GlobalConfigOverrides,
+  assertSupportedAnalysisFilter,
+  assertSafeFreeformConfigurationKey,
+  explainChannelOperationsConfig,
+  initializeChannelOperationsConfig,
+  redactConfigurationPathForOutput,
+  updateAnalysisProfileOperationsConfig,
+  updateChannelOperationsConfig,
+  updateGlobalChannelOperationsConfig,
+  validateChannelOperationsConfig,
+} from "./lib/config.js";
 import { runDoctor } from "./lib/doctor.js";
 import { ExternalCommandError, UserInputError } from "./lib/errors.js";
 import { clipMedia, extractAudio, probeMedia } from "./lib/media.js";
@@ -69,6 +84,15 @@ function emit(value: unknown, title: string): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+function redactConfigCommandResult<T extends { configPath: string }>(
+  result: T,
+): T {
+  return {
+    ...result,
+    configPath: redactConfigurationPathForOutput(result.configPath),
+  };
+}
+
 function parseInteger(
   value: string,
   name: string,
@@ -89,6 +113,326 @@ function parseInteger(
   return parsed.data;
 }
 
+interface GlobalConfigOverrideOptions {
+  dataDirectory?: string;
+  syncFrequencyHours?: string;
+  maxConcurrency?: string;
+  quotaBudget?: string;
+  initialBackfillDays?: string;
+  rawEvidenceRetentionDays?: string;
+}
+
+interface ChannelConfigOverrideOptions {
+  channel?: string;
+  channelEnabled?: string;
+  channelSyncFrequencyHours?: string;
+  channelMaxConcurrency?: string;
+  channelQuotaBudget?: string;
+  channelInitialBackfillDays?: string;
+  channelRawEvidenceRetentionDays?: string;
+}
+
+interface AnalysisProfileOverrideOptions {
+  profile?: string;
+  profileMetrics?: string;
+  profileDimensions?: string;
+  profileDateRange?: string;
+  profileFilter?: string[];
+}
+
+type ConfigCommandOptions = GlobalConfigOverrideOptions &
+  ChannelConfigOverrideOptions &
+  AnalysisProfileOverrideOptions & {
+    config: string;
+  };
+
+function parseGlobalConfigOverrides(
+  options: GlobalConfigOverrideOptions,
+): GlobalConfigOverrides {
+  return {
+    dataDirectory: options.dataDirectory,
+    sync: {
+      ...(options.syncFrequencyHours === undefined
+        ? {}
+        : {
+            frequencyHours: parseInteger(
+              options.syncFrequencyHours,
+              "--sync-frequency-hours",
+              1,
+              168,
+            ),
+          }),
+      ...(options.maxConcurrency === undefined
+        ? {}
+        : {
+            maxConcurrency: parseInteger(
+              options.maxConcurrency,
+              "--max-concurrency",
+              1,
+              16,
+            ),
+          }),
+      ...(options.quotaBudget === undefined
+        ? {}
+        : {
+            quotaBudget: parseInteger(
+              options.quotaBudget,
+              "--quota-budget",
+              1,
+              1_000_000,
+            ),
+          }),
+      ...(options.initialBackfillDays === undefined
+        ? {}
+        : {
+            initialBackfillDays: parseInteger(
+              options.initialBackfillDays,
+              "--initial-backfill-days",
+              1,
+              3_650,
+            ),
+          }),
+    },
+    ...(options.rawEvidenceRetentionDays === undefined
+      ? {}
+      : {
+          rawEvidenceRetentionDays: parseInteger(
+            options.rawEvidenceRetentionDays,
+            "--raw-evidence-retention-days",
+            1,
+            3_650,
+          ),
+        }),
+  };
+}
+
+function parseBoolean(value: string, name: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  throw new UserInputError(`${name} 必须是 true 或 false。`);
+}
+
+function parseCommaSeparatedList(value: string, name: string): string[] {
+  const items = value.split(",").map((item) => item.trim());
+  if (items.length === 0 || items.some((item) => item.length === 0)) {
+    throw new UserInputError(
+      `${name} 必须是至少包含一个非空值的逗号分隔列表。`,
+    );
+  }
+  return items;
+}
+
+function collectOptionValue(
+  value: string,
+  previous: string[] | undefined,
+): string[] {
+  return [...(previous ?? []), value];
+}
+
+function parseProfileFilters(
+  values: string[] | undefined,
+): Record<string, string> | undefined {
+  if (values === undefined) {
+    return undefined;
+  }
+
+  const filters: Record<string, string> = {};
+  for (const value of values) {
+    const separatorIndex = value.indexOf("=");
+    if (separatorIndex <= 0 || separatorIndex === value.length - 1) {
+      throw new UserInputError(
+        "--profile-filter 必须使用 field=value 格式，且字段和值都不能为空。",
+      );
+    }
+
+    const field = value.slice(0, separatorIndex).trim();
+    const filterValue = value.slice(separatorIndex + 1).trim();
+    if (field.length === 0 || filterValue.length === 0) {
+      throw new UserInputError(
+        "--profile-filter 必须使用 field=value 格式，且字段和值都不能为空。",
+      );
+    }
+    assertSafeFreeformConfigurationKey(field, "分析配置档案的筛选字段");
+    assertSupportedAnalysisFilter(field, filterValue);
+    if (Object.hasOwn(filters, field)) {
+      throw new UserInputError("同一筛选字段只能提供一次。请合并后重试。");
+    }
+    filters[field] = filterValue;
+  }
+
+  return filters;
+}
+
+function parseChannelConfigOverrides(
+  options: ChannelConfigOverrideOptions,
+): ChannelConfigOverrides | undefined {
+  const hasChannelOptions =
+    options.channelEnabled !== undefined ||
+    options.channelSyncFrequencyHours !== undefined ||
+    options.channelMaxConcurrency !== undefined ||
+    options.channelQuotaBudget !== undefined ||
+    options.channelInitialBackfillDays !== undefined ||
+    options.channelRawEvidenceRetentionDays !== undefined;
+
+  if (options.channel === undefined) {
+    if (hasChannelOptions) {
+      throw new UserInputError(
+        "使用频道层配置覆盖时，必须同时提供 --channel <channel-id>。",
+      );
+    }
+    return undefined;
+  }
+
+  const sync: NonNullable<ChannelConfigOverrides["sync"]> = {
+    ...(options.channelSyncFrequencyHours === undefined
+      ? {}
+      : {
+          frequencyHours: parseInteger(
+            options.channelSyncFrequencyHours,
+            "--channel-sync-frequency-hours",
+            1,
+            168,
+          ),
+        }),
+    ...(options.channelMaxConcurrency === undefined
+      ? {}
+      : {
+          maxConcurrency: parseInteger(
+            options.channelMaxConcurrency,
+            "--channel-max-concurrency",
+            1,
+            16,
+          ),
+        }),
+    ...(options.channelQuotaBudget === undefined
+      ? {}
+      : {
+          quotaBudget: parseInteger(
+            options.channelQuotaBudget,
+            "--channel-quota-budget",
+            1,
+            1_000_000,
+          ),
+        }),
+    ...(options.channelInitialBackfillDays === undefined
+      ? {}
+      : {
+          initialBackfillDays: parseInteger(
+            options.channelInitialBackfillDays,
+            "--channel-initial-backfill-days",
+            1,
+            3_650,
+          ),
+        }),
+  };
+
+  return {
+    channelId: options.channel,
+    ...(options.channelEnabled === undefined
+      ? {}
+      : {
+          enabled: parseBoolean(options.channelEnabled, "--channel-enabled"),
+        }),
+    ...(Object.keys(sync).length === 0 ? {} : { sync }),
+    ...(options.channelRawEvidenceRetentionDays === undefined
+      ? {}
+      : {
+          rawEvidenceRetentionDays: parseInteger(
+            options.channelRawEvidenceRetentionDays,
+            "--channel-raw-evidence-retention-days",
+            1,
+            3_650,
+          ),
+        }),
+  };
+}
+
+function parseAnalysisProfileOverrides(
+  options: AnalysisProfileOverrideOptions,
+): AnalysisProfileOverrides | undefined {
+  const hasProfileOptions =
+    options.profileMetrics !== undefined ||
+    options.profileDimensions !== undefined ||
+    options.profileDateRange !== undefined ||
+    options.profileFilter !== undefined;
+
+  if (options.profile === undefined) {
+    if (hasProfileOptions) {
+      throw new UserInputError(
+        "使用分析档案层配置覆盖时，必须同时提供 --profile <name>。",
+      );
+    }
+    return undefined;
+  }
+
+  assertSafeFreeformConfigurationKey(options.profile, "分析配置档案名称");
+  return {
+    name: options.profile,
+    ...(options.profileMetrics === undefined
+      ? {}
+      : {
+          metrics: parseCommaSeparatedList(
+            options.profileMetrics,
+            "--profile-metrics",
+          ),
+        }),
+    ...(options.profileDimensions === undefined
+      ? {}
+      : {
+          dimensions: parseCommaSeparatedList(
+            options.profileDimensions,
+            "--profile-dimensions",
+          ),
+        }),
+    ...(options.profileDateRange === undefined
+      ? {}
+      : { dateRange: options.profileDateRange }),
+    ...(options.profileFilter === undefined
+      ? {}
+      : { filters: parseProfileFilters(options.profileFilter) }),
+  };
+}
+
+function parseChannelOperationsConfigOverrides(
+  options: GlobalConfigOverrideOptions &
+    ChannelConfigOverrideOptions &
+    AnalysisProfileOverrideOptions,
+): ChannelOperationsConfigOverrides {
+  const channel = parseChannelConfigOverrides(options);
+  const analysisProfile = parseAnalysisProfileOverrides(options);
+
+  return {
+    global: parseGlobalConfigOverrides(options),
+    ...(channel === undefined ? {} : { channel }),
+    ...(analysisProfile === undefined ? {} : { analysisProfile }),
+  };
+}
+
+function requireChannelConfigOverrides(
+  options: ChannelConfigOverrideOptions,
+): ChannelConfigOverrides {
+  const overrides = parseChannelConfigOverrides(options);
+  if (overrides === undefined) {
+    throw new UserInputError("必须提供 --channel <channel-id>。");
+  }
+  return overrides;
+}
+
+function requireAnalysisProfileOverrides(
+  options: AnalysisProfileOverrideOptions,
+): AnalysisProfileOverrides {
+  const overrides = parseAnalysisProfileOverrides(options);
+  if (overrides === undefined) {
+    throw new UserInputError("必须提供 --profile <name>。");
+  }
+  return overrides;
+}
+
 function requireRightsConfirmation(confirmed: boolean): void {
   if (!confirmed) {
     throw new UserInputError(
@@ -97,22 +441,31 @@ function requireRightsConfirmation(confirmed: boolean): void {
   }
 }
 
+function safeErrorMessage(message: string): string {
+  return redactConfigurationPathForOutput(message) === message
+    ? message
+    : "操作失败。为保护凭据，敏感路径已隐藏。";
+}
+
 function readableError(error: unknown): ErrorPayload["error"] {
   if (error instanceof CommanderError) {
-    return { code: error.code, message: error.message.trim() };
+    return {
+      code: error.code,
+      message: safeErrorMessage(error.message.trim()),
+    };
   }
   if (error instanceof UserInputError) {
-    return { code: error.code, message: error.message };
+    return { code: error.code, message: safeErrorMessage(error.message) };
   }
   if (error instanceof ExternalCommandError) {
     return {
       code: error.code,
-      message: error.message,
-      details: error.stderr || "外部工具没有返回可读错误。",
+      message: safeErrorMessage(error.message),
+      details: safeErrorMessage(error.stderr || "外部工具没有返回可读错误。"),
     };
   }
   if (error instanceof Error) {
-    return { code: "UNEXPECTED", message: error.message };
+    return { code: "UNEXPECTED", message: safeErrorMessage(error.message) };
   }
   return { code: "UNEXPECTED", message: "发生未知错误。" };
 }
@@ -141,6 +494,149 @@ program
   .command("doctor")
   .description("检查 yt-dlp、FFmpeg 与可选运营工具是否可用")
   .action(async () => execute("环境检查", runDoctor));
+
+const config = program
+  .command("config")
+  .description("初始化和检查频道运营数据配置");
+
+function addGlobalConfigOverrideOptions(command: Command): Command {
+  return command
+    .option("--data-directory <path>", "更新本机数据目录")
+    .option("--sync-frequency-hours <hours>", "更新同步间隔小时数")
+    .option("--max-concurrency <count>", "更新同步最大并发数")
+    .option("--quota-budget <units>", "更新同步配额预算")
+    .option("--initial-backfill-days <days>", "更新首次回填天数")
+    .option("--raw-evidence-retention-days <days>", "更新原始证据保留天数");
+}
+
+function addChannelConfigOverrideOptions(command: Command): Command {
+  return command
+    .option("--channel <channel-id>", "要覆盖的本机频道配置")
+    .option("--channel-enabled <true|false>", "更新频道是否启用同步")
+    .option("--channel-sync-frequency-hours <hours>", "更新频道同步间隔小时数")
+    .option("--channel-max-concurrency <count>", "更新频道同步最大并发数")
+    .option("--channel-quota-budget <units>", "更新频道同步配额预算")
+    .option("--channel-initial-backfill-days <days>", "更新频道首次回填天数")
+    .option(
+      "--channel-raw-evidence-retention-days <days>",
+      "更新频道原始证据保留天数",
+    );
+}
+
+function addAnalysisProfileOverrideOptions(command: Command): Command {
+  return command
+    .option("--profile <name>", "要覆盖的分析配置档案")
+    .option("--profile-metrics <items>", "逗号分隔的分析指标")
+    .option("--profile-dimensions <items>", "逗号分隔的分析维度")
+    .option("--profile-date-range <range>", "分析时间范围")
+    .option(
+      "--profile-filter <field=value>",
+      "分析筛选条件；可重复提供",
+      collectOptionValue,
+    );
+}
+
+config
+  .command("init")
+  .description("在明确路径创建不含凭据的默认配置")
+  .requiredOption("-o, --output <path>", "配置文件输出路径")
+  .option("--overwrite", "允许覆盖明确指定的已有配置文件")
+  .action(async (options: { output: string; overwrite?: boolean }) =>
+    execute("配置初始化", async () =>
+      redactConfigCommandResult(
+        await initializeChannelOperationsConfig(
+          options.output,
+          Boolean(options.overwrite),
+        ),
+      ),
+    ),
+  );
+
+config
+  .command("explain")
+  .description("说明全局、频道和分析配置档案的用途与凭据边界")
+  .action(async () =>
+    execute("配置说明", async () => explainChannelOperationsConfig()),
+  );
+
+const setGlobalConfig = addGlobalConfigOverrideOptions(
+  config
+    .command("set-global")
+    .description("将已校验的全局配置覆盖项持久化到明确路径")
+    .requiredOption("-c, --config <path>", "要更新的配置文件路径"),
+);
+
+setGlobalConfig.action(
+  async (options: { config: string } & GlobalConfigOverrideOptions) =>
+    execute("更新全局配置", async () =>
+      redactConfigCommandResult(
+        await updateGlobalChannelOperationsConfig(
+          options.config,
+          parseGlobalConfigOverrides(options),
+        ),
+      ),
+    ),
+);
+
+const setChannelConfig = addChannelConfigOverrideOptions(
+  config
+    .command("set-channel")
+    .description("将已校验的单频道配置覆盖项持久化到明确路径")
+    .requiredOption("-c, --config <path>", "要更新的配置文件路径"),
+);
+
+setChannelConfig.action(
+  async (options: { config: string } & ChannelConfigOverrideOptions) =>
+    execute("更新频道配置", async () =>
+      redactConfigCommandResult(
+        await updateChannelOperationsConfig(
+          options.config,
+          requireChannelConfigOverrides(options),
+        ),
+      ),
+    ),
+);
+
+const setAnalysisProfileConfig = addAnalysisProfileOverrideOptions(
+  config
+    .command("set-profile")
+    .description("将已校验的分析配置档案覆盖项持久化到明确路径")
+    .requiredOption("-c, --config <path>", "要更新的配置文件路径"),
+);
+
+setAnalysisProfileConfig.action(
+  async (options: { config: string } & AnalysisProfileOverrideOptions) =>
+    execute("更新分析配置档案", async () =>
+      redactConfigCommandResult(
+        await updateAnalysisProfileOperationsConfig(
+          options.config,
+          requireAnalysisProfileOverrides(options),
+        ),
+      ),
+    ),
+);
+
+const validateConfig = addAnalysisProfileOverrideOptions(
+  addChannelConfigOverrideOptions(
+    addGlobalConfigOverrideOptions(
+      config
+        .command("validate")
+        .description("校验配置格式，并临时检查三层配置覆盖")
+        .requiredOption("-c, --config <path>", "要校验的配置文件路径"),
+    ),
+  ),
+);
+
+validateConfig.action(async (options: ConfigCommandOptions) =>
+  execute("配置校验", async () =>
+    redactConfigCommandResult(
+      await validateChannelOperationsConfig(
+        options.config,
+        parseChannelOperationsConfigOverrides(options),
+      ),
+    ),
+  ),
+);
 
 program
   .command("search")
