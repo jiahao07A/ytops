@@ -1,14 +1,14 @@
 # 10 — 频道运营配置辅助 skill
 
-**Type:** task
+Type: task
 
-**What to build:** 提供一个随仓库版本化的配置辅助 skill，使 AI 能理解宽泛中文表达并安全地指导用户初始化、校验、解释和修复频道运营数据配置。
+What to build: 提供一个随仓库版本化的配置辅助 skill，使 AI 能理解宽泛中文表达并安全地指导用户初始化、校验、解释和修复频道运营数据配置。
 
-**Blocked by:** 01 — 安全配置与配置合同.
+Blocked by: 01 — 安全配置与配置合同.
 
-**Status:** open
+Status: open
 
-**Labels:** ready-for-agent
+Labels: ready-for-agent
 
 - [ ] skill 能处理初始化频道接入、生成分析配置、检查并解释配置、修复校验错误等宽泛表达。
 - [ ] skill 先读取现状、提出可见配置差异、征得确认后才写入，并在写入后执行配置校验。

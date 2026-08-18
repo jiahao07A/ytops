@@ -8,6 +8,8 @@ Issues and specs for this repository live as Markdown files in `.scratch/`.
 - Store a feature specification at `.scratch/<feature-slug>/spec.md`.
 - Store one implementation issue per file at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`.
 - Record the current issue state in a `Status:` line near the top of each issue: `open`, `claimed`, or `resolved`. `open` means the ticket is fully scoped and ready for an agent to claim.
+- Keep tracker keys as plain text lines (`Type:`, `Status:`, and `Blocked by:`), not bold Markdown labels, so simple readers can parse them reliably.
+- A resolved issue must not retain the `ready-for-agent` label; that label is only for unclaimed work.
 - Append comments and conversation history under a `## Comments` heading.
 
 ## Publishing work

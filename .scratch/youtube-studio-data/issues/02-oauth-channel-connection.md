@@ -1,14 +1,14 @@
 # 02 — OAuth 授权与显式频道接入
 
-**Type:** task
+Type: task
 
-**What to build:** 让频道运营者按照安全指引完成官方用户 OAuth 授权，明确选择一个可访问频道并建立可查看状态的频道接入。
+What to build: 让频道运营者按照安全指引完成官方用户 OAuth 授权，明确选择一个可访问频道并建立可查看状态的频道接入。
 
-**Blocked by:** 01 — 安全配置与配置合同.
+Blocked by: 01 — 安全配置与配置合同.
 
-**Status:** open
+Status: open
 
-**Labels:** ready-for-agent
+Labels: ready-for-agent
 
 - [ ] 用户能获得 Google Cloud、OAuth 同意屏幕、客户端环境配置和授权步骤的指引，且指引不要求回显秘密。
 - [ ] 授权后系统展示所有可访问频道，用户必须明确选择目标频道，不能默认选择第一个频道。

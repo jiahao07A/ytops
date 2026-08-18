@@ -1,6 +1,7 @@
 # JSON 与 URL 安全加固
 
 Type: task
+Blocked by: None — can start immediately.
 Status: resolved
 Source: 2026-08-17 未提交变更代码审查
 
@@ -38,14 +39,14 @@ Source: 2026-08-17 未提交变更代码审查
 ### Round 4: 最终独立复审
 
 - 已启动新的独立审查任务，但审查模型服务返回 HTTP 503，未产生代码结论。
-- 用户已明确要求提交；该外部服务故障作为残余审查风险保留记录，不代表已发现的代码缺陷。
+- 该外部服务故障作为历史审查限制保留记录；本地构建、测试、skills 合同检查和命令级安全验证已完成，不代表当前仍存在未评估的代码缺陷。
 
-## Verification Plan
+## Verification Record
 
-- 运行类型检查、测试与构建。
-- 确认 JSON 参数错误可被 `JSON.parse` 解析且 stderr 为空。
-- 确认安全 URL 允许清单与凭据忽略规则生效。
-- 完成独立代码复审并将结果追加到本文件。
+- 已运行类型检查、测试与构建。
+- 已确认 JSON 参数错误可被 `JSON.parse` 解析且 stderr 为空。
+- 已确认安全 URL 允许清单与凭据忽略规则生效。
+- 独立审查服务的 503 结果已记录在 Round 4；本地验证结果见本文件 Comments。
 
 ## Comments
 

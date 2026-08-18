@@ -10,7 +10,7 @@ The local issue tracker uses the five canonical labels in `docs/agents/triage-la
 
 ### Domain docs
 
-This repository uses a single-context layout with a root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+This repository uses a single-context layout with a root `CONTEXT.md`; read `docs/adr/` when it exists. See `docs/agents/domain.md`.
 
 ## Matt Pocock Skills Guide
 

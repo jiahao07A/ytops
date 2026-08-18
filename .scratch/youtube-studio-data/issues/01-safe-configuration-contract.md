@@ -1,14 +1,12 @@
 # 01 — 安全配置与配置合同
 
-**Type:** task
+Type: task
 
-**What to build:** 让频道运营者能够初始化、校验和理解全局运行配置、单频道同步配置与分析配置档案，同时保证配置不承载任何受保护凭据。
+What to build: 让频道运营者能够初始化、校验和理解全局运行配置、单频道同步配置与分析配置档案，同时保证配置不承载任何受保护凭据。
 
-**Blocked by:** None — can start immediately.
+Blocked by: None — can start immediately.
 
-**Status:** resolved
-
-**Labels:** ready-for-agent
+Status: resolved
 
 - [x] 用户可以初始化三层配置，并获得对每个选项的可读说明。
 - [x] 用户可以校验配置并得到明确、可操作的错误信息。

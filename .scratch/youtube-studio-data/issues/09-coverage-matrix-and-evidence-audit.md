@@ -1,14 +1,14 @@
 # 09 — 覆盖矩阵与证据审计
 
-**Type:** task
+Type: task
 
-**What to build:** 让频道运营者和 AI 调用方从 CLI/JSON 看到所有已实现数据能力的覆盖状态、限制和证据入口，以可审计方式理解“完整”的边界。
+What to build: 让频道运营者和 AI 调用方从 CLI/JSON 看到所有已实现数据能力的覆盖状态、限制和证据入口，以可审计方式理解“完整”的边界。
 
-**Blocked by:** 06 — 高维 Analytics 配置档案与按需查询; 07 — 异步 Reporting 数据源; 08 — 评论与可读取扩展数据源.
+Blocked by: 06 — 高维 Analytics 配置档案与按需查询; 07 — 异步 Reporting 数据源; 08 — 评论与可读取扩展数据源.
 
-**Status:** open
+Status: open
 
-**Labels:** ready-for-agent
+Labels: ready-for-agent
 
 - [ ] CLI/JSON 输出完整覆盖矩阵，使用已支持、部分支持、资格限制、估算或会调整、异步处理中和不可用状态。
 - [ ] 每个覆盖项说明适用范围、当前数据截至时间或报告状态，以及限制原因。

@@ -1,6 +1,7 @@
 # Quality and Automation Baseline
 
 Type: task
+Blocked by: None — can start immediately.
 Status: resolved
 
 ## Scope

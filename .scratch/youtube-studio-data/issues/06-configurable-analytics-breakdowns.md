@@ -1,14 +1,14 @@
 # 06 — 高维 Analytics 配置档案与按需查询
 
-**Type:** task
+Type: task
 
-**What to build:** 让频道运营者通过受校验的分析配置档案和临时参数，按需查询流量、设备、地域、受众和收入等高维细分数据。
+What to build: 让频道运营者通过受校验的分析配置档案和临时参数，按需查询流量、设备、地域、受众和收入等高维细分数据。
 
-**Blocked by:** 05 — 刷新、过期回退与配额状态.
+Blocked by: 05 — 刷新、过期回退与配额状态.
 
-**Status:** open
+Status: open
 
-**Labels:** ready-for-agent
+Labels: ready-for-agent
 
 - [ ] 用户可选择官方支持的指标、维度、时间范围和筛选条件，并在执行前获得组合兼容性校验。
 - [ ] 用户可保存并复用分析配置档案，也可为单次 CLI 查询临时覆盖允许的分析选项。

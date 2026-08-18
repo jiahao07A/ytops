@@ -78,7 +78,7 @@ Source: 2026-08-17 delegated primary-source research and Context7
 ## 当前仓库关联
 
 - 当前 CLI 的 `ops doctor` 在 OAuth 方面仅报告 `YTOPS_GOOGLE_CLIENT_ID` / `YTOPS_GOOGLE_CLIENT_SECRET` 是否配置，同时检查本机辅助工具；它没有 OAuth 登录、token 存储或 YouTube API 请求，见 [src/cli.ts](../../src/cli.ts:827) 和 [src/lib/doctor.ts](../../src/lib/doctor.ts:48)。
-- 现有架构只预留 `channel.inventory`、`analytics.report` 等窄 MCP 工具；官方 API 接入仍属于后续功能，见 [docs/architecture.md](../../docs/architecture.md:67)。
+- 现有架构只预留 `channel.inventory`、`analytics.report` 等窄 MCP 工具；官方 API 接入仍属于后续功能，见 [docs/architecture.md](../../docs/architecture.md)。
 
 ## 研究限制
 

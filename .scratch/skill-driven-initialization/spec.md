@@ -35,5 +35,5 @@ Make the repository ready for repeatable AI-assisted maintenance by documenting 
 
 - The repository has no configured remote; local Markdown remains the tracker.
 - The working tree began clean at commit `35a8db0`.
-- Current TypeScript is `7.0.2`. The current `typescript-eslint` release rejects TypeScript 7, so this effort uses Prettier plus existing TypeScript and Vitest checks instead of forcing an incompatible linter.
+- The quality baseline uses the TypeScript compiler, Prettier and Vitest. The repository does not include an ESLint or `typescript-eslint` dependency; adding one requires a separately verified compatibility decision.
 - User confirmation is required before creating any commit.

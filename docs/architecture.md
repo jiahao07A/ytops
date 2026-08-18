@@ -6,13 +6,13 @@
 
 `CLI + skills` 是主方案：长下载、转码、批量作业、可复现输出、Windows 路径和失败重试都属于命令行的自然边界。`MCP + skills` 不是替代方案，而是后续给 Agent/IDE 暴露稳定任务入口的薄适配层。
 
-| 维度           | CLI + skills                              | MCP + skills                   | 本项目决定            |
-| -------------- | ----------------------------------------- | ------------------------------ | --------------------- |
-| 长任务与大文件 | 原生进度、取消、日志和落盘工件            | 易碰到超时与上下文体积         | CLI 负责执行          |
-| 自动工具发现   | 依赖 skill 描述和 `--help`                | JSON Schema 对 Agent 更友好    | MCP 后置接入          |
-| 可测试性       | JSON、退出码、fixture 易稳定              | 还要维护 JSON-RPC 与 host 兼容 | CLI 为唯一事实源      |
-| 权限控制       | 可强制 `--dry-run` / `--apply` / 输出目录 | 注解不能替代实际授权           | CLI 和 skill 双重门禁 |
-| 跨客户端调用   | 需要 shell                                | Codex/IDE/Agent 统一           | 用窄 MCP 复用 CLI     |
+| 维度           | CLI + skills                   | MCP + skills                   | 本项目决定                           |
+| -------------- | ------------------------------ | ------------------------------ | ------------------------------------ |
+| 长任务与大文件 | 原生进度、取消、日志和落盘工件 | 易碰到超时与上下文体积         | CLI 负责执行                         |
+| 自动工具发现   | 依赖 skill 描述和 `--help`     | JSON Schema 对 Agent 更友好    | MCP 后置接入                         |
+| 可测试性       | JSON、退出码、fixture 易稳定   | 还要维护 JSON-RPC 与 host 兼容 | CLI 为唯一事实源                     |
+| 权限控制       | 输出目录、权利确认和安全参数   | 注解不能替代实际授权           | CLI 负责约束，skill 在调用前征求确认 |
+| 跨客户端调用   | 需要 shell                     | Codex/IDE/Agent 统一           | 用窄 MCP 复用 CLI                    |
 
 ## Layers
 
@@ -28,6 +28,10 @@ skills
   -> optional MCP adapter
        -> job submit/status/result, not raw flags or binary streams
 ```
+
+当前实现包含媒体发现、字幕、授权媒体、本地媒体处理、配置管理和 `ops doctor` 就绪检查。OAuth 授权、官方 YouTube API 请求、频道数据同步、频道写入和 MCP 适配层仍未实现；上图中这些路径是目标边界，不是当前 CLI 能力。
+
+`config set-global`、`config set-channel` 和 `config set-profile` 在 CLI 被调用时会直接写入配置。CLI 没有 `--dry-run` 或 `--apply` 选项；调用方 skill 可以在调用前展示差异并征求确认，但这属于编排层行为。
 
 ## Dependency policy
 

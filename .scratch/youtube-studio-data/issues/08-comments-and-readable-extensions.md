@@ -1,14 +1,14 @@
 # 08 — 评论与可读取扩展数据源
 
-**Type:** task
+Type: task
 
-**What to build:** 让频道运营者同步评论和官方允许读取的扩展内容元数据，并对权限、分页和不可读取范围给出可复查状态。
+What to build: 让频道运营者同步评论和官方允许读取的扩展内容元数据，并对权限、分页和不可读取范围给出可复查状态。
 
-**Blocked by:** 05 — 刷新、过期回退与配额状态.
+Blocked by: 05 — 刷新、过期回退与配额状态.
 
-**Status:** open
+Status: open
 
-**Labels:** ready-for-agent
+Labels: ready-for-agent
 
 - [ ] 用户可对已接入频道同步可读取评论和扩展内容元数据，并通过 CLI/JSON 查询。
 - [ ] 分页、中断和恢复遵循同步任务检查点合同，原始证据可供审计。

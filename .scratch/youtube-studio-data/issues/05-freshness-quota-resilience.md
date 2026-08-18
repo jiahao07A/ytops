@@ -1,14 +1,14 @@
 # 05 — 刷新、过期回退与配额状态
 
-**Type:** task
+Type: task
 
-**What to build:** 让调用方能够选择读取最后可用数据或要求源站最新数据，并在刷新失败、配额不足或同步中断时获得准确状态。
+What to build: 让调用方能够选择读取最后可用数据或要求源站最新数据，并在刷新失败、配额不足或同步中断时获得准确状态。
 
-**Blocked by:** 04 — 365 天核心 Analytics 事实查询.
+Blocked by: 04 — 默认 365 天、最大 3650 天核心 Analytics 事实查询.
 
-**Status:** open
+Status: open
 
-**Labels:** ready-for-agent
+Labels: ready-for-agent
 
 - [ ] 默认事实查询在本机仓库中即时返回最后可用数据，并明确显示数据截至时间和过期状态。
 - [ ] 显式刷新会先尝试从官方源站更新数据；失败时返回带原因的最后可用数据。
