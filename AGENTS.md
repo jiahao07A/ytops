@@ -67,5 +67,7 @@ Apply the invocation category above before following any row. An explicit-only r
 - `obsidian-vault` and `edit-article` are legacy local copies that are no longer present upstream. Do not route to either by default. For `obsidian-vault`, require explicit user authorization and a confirmed Windows vault path before reading or writing anything.
 
 搜索时请使用subagent,你只接受subagent的汇总而不接触原始信息
-每次开发完成后都要进行code review,而且必须使用subagent进行独立的review,根据review的结果进行修复和改进,然后再进行review,依次循环直至不再出现问题,才可向用户发起commit请求并等待批准
-所有review的结果都要进行追踪
+
+进行大规模开发时,要对任务进行明确且清晰的分析和拆解,分发给多个subagent,确保并行开发且不会产生交叉,易产生交叉的开发任务应等待所有subagent开发完成后由你亲自负责开发
+
+对于不会进行复用的subagent要及时关闭不要一直处于打开状态
