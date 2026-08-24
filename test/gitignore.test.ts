@@ -14,6 +14,8 @@ const sensitiveFiles = [
   "cookie.txt",
   "cookies.txt",
   "sample.cookies.txt",
+  ".ytops-data/oauth/connections.json",
+  ".ytops-data/oauth/credentials.dpapi.json",
 ];
 
 describe("credential ignore rules", () => {

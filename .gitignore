@@ -5,6 +5,7 @@ coverage/
 .env.*
 !.env.example
 .ytops/
+.ytops-data/
 artifacts/
 *.token.json
 *.credentials.json

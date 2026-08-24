@@ -53,8 +53,17 @@ const supportedAnalysisMetrics = new Set([
   "likes",
   "comments",
   "shares",
+  "estimatedRevenue",
 ]);
-const supportedAnalysisDimensions = new Set(["day"]);
+const supportedAnalysisDimensions = new Set([
+  "day",
+  "video",
+  "trafficSourceType",
+  "deviceType",
+  "country",
+  "ageGroup",
+  "gender",
+]);
 const supportedAnalysisDateRanges = new Set([
   "last-7-days",
   "last-28-days",
@@ -74,6 +83,22 @@ const supportedAnalysisFilters = {
   video: {
     isValid: (value: string) => youtubeVideoIdPattern.test(value),
     expectedValue: "有效的 YouTube 视频 ID",
+  },
+  trafficSourceType: {
+    isValid: (value: string) => /^[A-Za-z0-9_-]+$/.test(value),
+    expectedValue: "官方 Analytics 流量来源值",
+  },
+  deviceType: {
+    isValid: (value: string) => /^[A-Za-z0-9_-]+$/.test(value),
+    expectedValue: "官方 Analytics 设备值",
+  },
+  ageGroup: {
+    isValid: (value: string) => /^[A-Za-z0-9_-]+$/.test(value),
+    expectedValue: "官方 Analytics 受众年龄值",
+  },
+  gender: {
+    isValid: (value: string) => /^[A-Za-z0-9_-]+$/.test(value),
+    expectedValue: "官方 Analytics 受众性别值",
   },
 } as const;
 
@@ -163,7 +188,7 @@ function supportedAnalysisFilter(
 function analysisFilterValidationMessage(field: string): string {
   const filter = supportedAnalysisFilter(field);
   if (filter === undefined) {
-    return "不支持的分析筛选字段。当前支持：country、channel、video。";
+    return "不支持的分析筛选字段。当前支持：country、channel、video、trafficSourceType、deviceType、ageGroup、gender。";
   }
 
   return `筛选字段 ${field} 的筛选值只接受${filter.expectedValue}。`;
@@ -580,14 +605,14 @@ export function explainChannelOperationsConfig(): {
         {
           name: "analysisProfiles.<name>.metrics",
           description: "要请求的指标列表。",
-          rule: "首期支持 views、estimatedMinutesWatched、averageViewDuration、likes、comments、shares；CLI 使用逗号分隔列表。",
+          rule: "支持核心指标及 estimatedRevenue；CLI 使用逗号分隔列表。收入结果必须标记估算或资格限制。",
           temporaryCommand: validateNewProfile,
           persistentCommand: setNewProfile,
         },
         {
           name: "analysisProfiles.<name>.dimensions",
           description: "要请求的维度列表。",
-          rule: "首期支持 day；CLI 使用逗号分隔列表。",
+          rule: "支持 day、video、trafficSourceType、deviceType、country、ageGroup、gender；CLI 使用逗号分隔列表。",
           temporaryCommand: validateNewProfile,
           persistentCommand: setNewProfile,
         },

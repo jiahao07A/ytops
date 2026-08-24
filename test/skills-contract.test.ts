@@ -50,3 +50,24 @@ describe("machine-readable command documentation", () => {
     },
   );
 });
+
+describe("频道配置辅助协议", () => {
+  it("从主 skill 链接配置辅助参考，并声明确认边界", () => {
+    const skill = readFileSync(
+      resolve(process.cwd(), "skills/youtube-channel-operations/SKILL.md"),
+      "utf8",
+    );
+    const assistant = readFileSync(
+      resolve(
+        process.cwd(),
+        "skills/youtube-channel-operations/references/configuration-assistant.md",
+      ),
+      "utf8",
+    );
+
+    expect(skill).toContain("references/configuration-assistant.md");
+    expect(assistant).toContain("用户明确确认前不得调用任何 `config set-*`");
+    expect(assistant).toContain('"confirmed": false');
+    expect(assistant).toContain("不得要求用户在聊天中发送客户端秘密");
+  });
+});

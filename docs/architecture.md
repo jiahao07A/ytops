@@ -29,7 +29,7 @@ skills
        -> job submit/status/result, not raw flags or binary streams
 ```
 
-当前实现包含媒体发现、字幕、授权媒体、本地媒体处理、配置管理和 `ops doctor` 就绪检查。OAuth 授权、官方 YouTube API 请求、频道数据同步、频道写入和 MCP 适配层仍未实现；上图中这些路径是目标边界，不是当前 CLI 能力。
+当前实现包含媒体发现、字幕、授权媒体、本地媒体处理、配置管理、`ops doctor` 就绪检查、只读 OAuth 频道接入、可恢复频道元数据同步、核心/高维 Analytics、异步 Reporting、只读评论和覆盖矩阵。OAuth 令牌与客户端秘密由 Windows 用户级 DPAPI 保护；状态查询可以使用官方 API 校验凭据并报告过期、失效或撤销原因。频道写入和 MCP 适配层仍未实现；上图中这些路径是目标边界，不是当前 CLI 能力。
 
 `config set-global`、`config set-channel` 和 `config set-profile` 在 CLI 被调用时会直接写入配置。CLI 没有 `--dry-run` 或 `--apply` 选项；调用方 skill 可以在调用前展示差异并征求确认，但这属于编排层行为。
 
