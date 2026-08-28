@@ -1,5 +1,12 @@
 import { ExternalCommandError, UserInputError } from "./errors.js";
-import { runCommand } from "./process.js";
+import {
+  createCommandLaunchFailure,
+  ExternalToolError,
+  runCommand,
+  type CommandRunner,
+} from "./process.js";
+
+export { ExternalToolError } from "./process.js";
 
 export type DownloadKind = "video" | "audio";
 export type VideoQuality = "best" | `${number}p`;
@@ -33,6 +40,10 @@ export interface VideoSummary {
   viewCount: number | null;
   uploadDate: string | null;
   thumbnail: string | null;
+}
+
+export interface YtDlpOptions {
+  runner?: CommandRunner;
 }
 
 function safeYtDlpEnvironment(): NodeJS.ProcessEnv {
@@ -91,37 +102,75 @@ function assertYouTubeUrl(value: string): void {
   }
 }
 
-async function runYtDlp(args: string[]) {
+async function runYtDlp(args: string[], runner: CommandRunner = runCommand) {
   try {
-    return await runCommand("yt-dlp", args, { env: safeYtDlpEnvironment() });
-  } catch {
-    throw new UserInputError(
-      "找不到 yt-dlp。请先安装并确认它位于 PATH 中，然后运行 ytops doctor。",
+    const result = await runner("yt-dlp", args, {
+      env: safeYtDlpEnvironment(),
+    });
+    if (result.launchFailure) {
+      throw new ExternalToolError(
+        result.command,
+        result.args,
+        result.launchFailure.kind,
+        undefined,
+        result.launchFailure.detail,
+      );
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof ExternalToolError) {
+      throw error;
+    }
+    const failure = createCommandLaunchFailure(error);
+    throw new ExternalToolError(
+      "yt-dlp",
+      args,
+      failure.kind,
+      undefined,
+      failure.detail,
     );
   }
 }
 
-async function readJson(args: string[]): Promise<Record<string, unknown>> {
-  const result = await runYtDlp(args);
+async function readJson(
+  args: string[],
+  runner?: CommandRunner,
+): Promise<Record<string, unknown>> {
+  const result = await runYtDlp(args, runner);
   if (result.exitCode !== 0) {
-    throw new ExternalCommandError(
+    throw new ExternalToolError(
       result.command,
       result.args,
+      "non-zero-exit",
       result.exitCode,
-      result.stderr,
+      `命令以退出码 ${result.exitCode ?? "未知"} 结束。`,
     );
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(result.stdout) as Record<string, unknown>;
+    parsed = JSON.parse(result.stdout);
   } catch {
-    throw new ExternalCommandError(
+    throw new ExternalToolError(
       result.command,
       result.args,
+      "malformed-output",
       result.exitCode,
-      "yt-dlp did not return valid JSON.",
+      "yt-dlp 未返回可解析的 JSON。",
     );
   }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new ExternalToolError(
+      result.command,
+      result.args,
+      "invalid-output",
+      result.exitCode,
+      "yt-dlp JSON 响应必须是对象。",
+    );
+  }
+
+  return parsed as Record<string, unknown>;
 }
 
 function asString(value: unknown): string | null {
@@ -130,6 +179,14 @@ function asString(value: unknown): string | null {
 
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function hasVideoIdentity(raw: Record<string, unknown>): boolean {
+  return (
+    asString(raw.id) !== null &&
+    asString(raw.title) !== null &&
+    (asString(raw.webpage_url) ?? asString(raw.original_url)) !== null
+  );
 }
 
 export function summarizeVideo(raw: Record<string, unknown>): VideoSummary {
@@ -148,37 +205,81 @@ export function summarizeVideo(raw: Record<string, unknown>): VideoSummary {
 export async function searchVideos(
   query: string,
   limit: number,
+  options: YtDlpOptions = {},
 ): Promise<VideoSummary[]> {
   if (query.trim().length === 0) {
     throw new UserInputError("搜索词不能为空。");
   }
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+    throw new UserInputError("搜索结果数量必须是 1 到 50 之间的整数。");
+  }
 
-  const raw = await readJson([
+  const args = [
     ...SAFE_YTDLP_ARGUMENTS,
     "--skip-download",
     "--dump-single-json",
     `ytsearch${limit}:${query}`,
-  ]);
-  const entries = Array.isArray(raw.entries) ? raw.entries : [];
-
-  return entries
-    .filter(
-      (entry): entry is Record<string, unknown> =>
-        typeof entry === "object" && entry !== null,
+  ];
+  const raw = await readJson(args, options.runner);
+  if (!Array.isArray(raw.entries)) {
+    throw new ExternalToolError(
+      "yt-dlp",
+      args,
+      "invalid-output",
+      0,
+      "yt-dlp 搜索响应缺少 entries 数组。",
+    );
+  }
+  const entries = raw.entries;
+  if (
+    entries.some(
+      (entry) =>
+        typeof entry !== "object" || entry === null || Array.isArray(entry),
     )
-    .map(summarizeVideo);
+  ) {
+    throw new ExternalToolError(
+      "yt-dlp",
+      args,
+      "invalid-output",
+      0,
+      "yt-dlp 搜索响应包含无效条目。",
+    );
+  }
+  const videoEntries = entries as Record<string, unknown>[];
+  if (videoEntries.some((entry) => !hasVideoIdentity(entry))) {
+    throw new ExternalToolError(
+      "yt-dlp",
+      args,
+      "invalid-output",
+      0,
+      "yt-dlp 搜索响应条目缺少 id、title 或 URL。",
+    );
+  }
+
+  return videoEntries.map(summarizeVideo);
 }
 
 export async function inspectVideo(
   url: string,
+  options: YtDlpOptions = {},
 ): Promise<VideoSummary & { description: string | null }> {
   assertYouTubeUrl(url);
-  const raw = await readJson([
+  const args = [
     ...SAFE_YTDLP_ARGUMENTS,
     "--skip-download",
     "--dump-single-json",
     url,
-  ]);
+  ];
+  const raw = await readJson(args, options.runner);
+  if (!hasVideoIdentity(raw)) {
+    throw new ExternalToolError(
+      "yt-dlp",
+      args,
+      "invalid-output",
+      0,
+      "yt-dlp 视频响应缺少 id、title 或 URL。",
+    );
+  }
   return {
     ...summarizeVideo(raw),
     description: asString(raw.description),
@@ -192,23 +293,34 @@ export interface CaptionLanguages {
 
 export async function listCaptionLanguages(
   url: string,
+  options: YtDlpOptions = {},
 ): Promise<CaptionLanguages> {
   assertYouTubeUrl(url);
-  const raw = await readJson([
+  const args = [
     ...SAFE_YTDLP_ARGUMENTS,
     "--skip-download",
     "--dump-single-json",
     url,
-  ]);
-  const subtitles =
-    typeof raw.subtitles === "object" && raw.subtitles !== null
-      ? raw.subtitles
-      : {};
-  const automaticCaptions =
-    typeof raw.automatic_captions === "object" &&
-    raw.automatic_captions !== null
-      ? raw.automatic_captions
-      : {};
+  ];
+  const raw = await readJson(args, options.runner);
+  if (
+    typeof raw.subtitles !== "object" ||
+    raw.subtitles === null ||
+    Array.isArray(raw.subtitles) ||
+    typeof raw.automatic_captions !== "object" ||
+    raw.automatic_captions === null ||
+    Array.isArray(raw.automatic_captions)
+  ) {
+    throw new ExternalToolError(
+      "yt-dlp",
+      args,
+      "invalid-output",
+      0,
+      "yt-dlp 字幕响应缺少语言集合。",
+    );
+  }
+  const subtitles = raw.subtitles;
+  const automaticCaptions = raw.automatic_captions;
 
   return {
     manual: Object.keys(subtitles),

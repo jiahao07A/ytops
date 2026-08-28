@@ -137,4 +137,42 @@ describe("CLI 频道 OAuth 接入", () => {
       });
     });
   });
+
+  it("授权完成失败时不回显授权码、state 或客户端秘密", () => {
+    withConfig((configPath) => {
+      const authorizationCode = "authorization-code-must-not-leak";
+      const oauthState = "oauth-state-must-not-leak";
+      const clientSecret = "client-secret-must-not-leak";
+      const result = runCli(
+        [
+          "--json",
+          "ops",
+          "channel",
+          "auth-complete",
+          "--config",
+          configPath,
+          "--code",
+          authorizationCode,
+          "--state",
+          oauthState,
+        ],
+        {
+          ...process.env,
+          YTOPS_GOOGLE_CLIENT_SECRET: clientSecret,
+        },
+      );
+
+      expect(result.status).toBeGreaterThan(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        error: {
+          code: "USER_INPUT",
+        },
+      });
+      expect(result.stdout).not.toContain(authorizationCode);
+      expect(result.stdout).not.toContain(oauthState);
+      expect(result.stdout).not.toContain(clientSecret);
+    });
+  });
 });

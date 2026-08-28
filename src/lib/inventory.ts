@@ -8,15 +8,23 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import lockfile from "proper-lockfile";
 import { z } from "zod";
 import {
   type ChannelSummary,
   getChannelAccessToken,
+  getChannelConnectionStatus,
+  OAuthTokenRefreshError,
   type CredentialStore,
   type OAuthWorkflowDependencies,
 } from "./oauth.js";
 import { InventoryServiceError, UserInputError } from "./errors.js";
 import { validateChannelOperationsConfig } from "./config.js";
+import {
+  createSyncTaskIdentity,
+  type SyncTaskProjection,
+  type SyncTaskStatus,
+} from "./sync-task.js";
 
 export type InventoryScopeName = "channel" | "uploads" | "videos";
 
@@ -62,6 +70,11 @@ export function parseInventoryScope(value: string | undefined): InventoryScope {
   }
   if (!scope.channel && !scope.uploads && !scope.videos) {
     throw new UserInputError("元数据同步范围至少要包含一个数据类别。");
+  }
+  if (scope.videos && !scope.uploads) {
+    throw new UserInputError(
+      "videos 范围必须同时包含 uploads，才能发现需要读取的视频 ID。",
+    );
   }
   return scope;
 }
@@ -109,10 +122,9 @@ export interface InventoryData {
 
 export type InventoryPhase = "channels" | "uploads" | "videos" | "complete";
 export type InventoryRunStatus =
-  "not-started" | "running" | "partial" | "completed" | "failed";
+  "not-started" | "running" | "waiting" | "partial" | "completed" | "failed";
 
-export interface InventorySyncState {
-  version: 1;
+interface InventorySyncStateFields {
   channelId: string;
   status: InventoryRunStatus;
   scope: InventoryScope;
@@ -124,13 +136,18 @@ export interface InventorySyncState {
   };
   checkpoint: {
     uploadPageToken?: string;
+    uploadsComplete?: boolean;
     videoIndex: number;
     videoIds: string[];
+    snapshotStartedFromBeginning?: boolean;
+    seenUploadItemIds?: string[];
+    seenVideoIds?: string[];
   };
   startedAt?: string;
   updatedAt: string;
   lastSuccessAt?: string;
   dataAsOf?: string;
+  nextRetryAt?: string;
   error?: {
     kind: string;
     message: string;
@@ -138,10 +155,164 @@ export interface InventorySyncState {
   };
 }
 
+export type InventorySyncState =
+  | (InventorySyncStateFields & {
+      version: 1;
+    })
+  | (InventorySyncStateFields & {
+      version: 2;
+      channelConnectionId: string;
+    });
+
 export interface InventorySyncResult {
   channelId: string;
+  task: SyncTaskProjection;
   state: InventorySyncState;
   data: InventoryData;
+}
+
+function inventoryScopeNames(scope: InventoryScope): InventoryScopeName[] {
+  return (["channel", "uploads", "videos"] as const).filter(
+    (name) => scope[name],
+  );
+}
+
+function normalizeInventoryScope(scope: InventoryScope): InventoryScope {
+  if (
+    typeof scope.channel !== "boolean" ||
+    typeof scope.uploads !== "boolean" ||
+    typeof scope.videos !== "boolean"
+  ) {
+    throw new UserInputError(
+      "元数据同步范围必须明确包含 channel、uploads 和 videos 三个布尔字段。",
+    );
+  }
+  if (!scope.channel && !scope.uploads && !scope.videos) {
+    throw new UserInputError("元数据同步范围至少要包含一个数据类别。");
+  }
+  if (scope.videos && !scope.uploads) {
+    throw new UserInputError(
+      "videos 范围必须同时包含 uploads，才能发现需要读取的视频 ID。",
+    );
+  }
+  return {
+    channel: scope.channel,
+    uploads: scope.uploads,
+    videos: scope.videos,
+  };
+}
+
+function sameInventoryScope(
+  left: InventoryScope,
+  right: InventoryScope,
+): boolean {
+  return (
+    left.channel === right.channel &&
+    left.uploads === right.uploads &&
+    left.videos === right.videos
+  );
+}
+
+function projectInventoryStatus(state: InventorySyncState): SyncTaskStatus {
+  if (state.error?.kind === "busy" && state.error.retryable) {
+    return "retrying";
+  }
+  switch (state.status) {
+    case "not-started":
+      return "queued";
+    case "running":
+      return "running";
+    case "waiting":
+      return "waiting";
+    case "partial":
+      return state.error?.retryable === false ? "failed" : "partial";
+    case "completed":
+      return "completed";
+    case "failed":
+      return state.error?.retryable === true ? "retrying" : "failed";
+  }
+}
+
+const INVENTORY_RETRY_DELAY_MS = 5 * 60 * 1000;
+
+function inventoryNextRetryAt(referenceTime: string): string {
+  const timestamp = Date.parse(referenceTime);
+  return Number.isNaN(timestamp)
+    ? referenceTime
+    : new Date(timestamp + INVENTORY_RETRY_DELAY_MS).toISOString();
+}
+
+function inventoryStateConnectionId(state: InventorySyncState): string {
+  if (state.version !== 2) {
+    throw new InventoryServiceError(
+      "旧版 Inventory 状态尚未绑定频道接入，无法生成同步任务身份。",
+      "invalid-response",
+      false,
+    );
+  }
+  return state.channelConnectionId;
+}
+
+function projectInventoryTask(state: InventorySyncState): SyncTaskProjection {
+  const identity = createSyncTaskIdentity({
+    channelConnectionId: inventoryStateConnectionId(state),
+    source: "youtube-data-api",
+    scope: inventoryScopeNames(state.scope),
+  });
+  const status = projectInventoryStatus(state);
+  const nextRetryAt =
+    status === "partial" || status === "retrying"
+      ? (state.nextRetryAt ?? inventoryNextRetryAt(state.updatedAt))
+      : undefined;
+  return {
+    id: identity.id,
+    identity,
+    status,
+    updatedAt: state.updatedAt,
+    ...(state.startedAt === undefined ? {} : { startedAt: state.startedAt }),
+    ...(status === "completed" ? { completedAt: state.updatedAt } : {}),
+    ...(state.lastSuccessAt === undefined
+      ? {}
+      : { lastSuccessAt: state.lastSuccessAt }),
+    ...(state.dataAsOf === undefined ? {} : { dataAsOf: state.dataAsOf }),
+    retryable: state.error?.retryable ?? false,
+    ...(nextRetryAt === undefined ? {} : { nextRetryAt }),
+    ...(state.error === undefined ? {} : { error: state.error }),
+  };
+}
+
+function inventoryResult(
+  state: InventorySyncState,
+  data: InventoryData,
+): InventorySyncResult {
+  return {
+    channelId: state.channelId,
+    task: projectInventoryTask(state),
+    state,
+    data,
+  };
+}
+
+function assertInventoryTaskIdentity(
+  state: InventorySyncState,
+  data: InventoryData,
+  channelId: string,
+  channelConnectionId: string,
+  scope: InventoryScope,
+): void {
+  if (
+    state.version !== 2 ||
+    state.channelConnectionId !== channelConnectionId ||
+    state.channelId !== channelId ||
+    data.channelId !== channelId ||
+    !sameInventoryScope(state.scope, scope)
+  ) {
+    throw new InventoryServiceError(
+      "持久化任务身份与请求的频道或范围不一致，已保留原文件且未继续同步。",
+      "invalid-response",
+      false,
+    );
+  }
 }
 
 export interface InventoryPage<T> {
@@ -188,6 +359,18 @@ export class GoogleInventoryProvider implements InventoryProvider {
       id: input.channelId,
     }).toString();
     const payload = await this.request(url, input.accessToken);
+    const rawItems = requiredArrayProperty(
+      payload,
+      "items",
+      "官方 API 返回的频道元数据格式无效。",
+    );
+    if (rawItems.some((rawItem) => !isRecord(rawItem))) {
+      throw new InventoryServiceError(
+        "官方 API 返回的频道元数据格式无效。",
+        "invalid-response",
+        false,
+      );
+    }
     const item = firstRecordItem(payload);
     if (item === undefined) {
       throw new InventoryServiceError(
@@ -204,10 +387,12 @@ export class GoogleInventoryProvider implements InventoryProvider {
       contentDetails !== undefined && isRecord(contentDetails.relatedPlaylists)
         ? contentDetails.relatedPlaylists
         : undefined;
-    const id = stringProperty(item, "id") ?? input.channelId;
+    const id = nonBlankStringProperty(item, "id");
     const title =
-      snippet === undefined ? undefined : stringProperty(snippet, "title");
-    if (title === undefined) {
+      snippet === undefined
+        ? undefined
+        : nonBlankStringProperty(snippet, "title");
+    if (id === undefined || title === undefined) {
       throw new InventoryServiceError(
         "官方 API 返回的频道元数据格式无效。",
         "invalid-response",
@@ -243,11 +428,20 @@ export class GoogleInventoryProvider implements InventoryProvider {
       ...(input.pageToken === undefined ? {} : { pageToken: input.pageToken }),
     }).toString();
     const payload = await this.request(url, input.accessToken);
-    const items = arrayProperty(payload, "items").flatMap((rawItem) => {
+    const rawItems = requiredArrayProperty(
+      payload,
+      "items",
+      "官方 API 返回的上传清单格式无效。",
+    );
+    const items = rawItems.map((rawItem) => {
       if (!isRecord(rawItem)) {
-        return [];
+        throw new InventoryServiceError(
+          "官方 API 返回的上传清单格式无效。",
+          "invalid-response",
+          false,
+        );
       }
-      const playlistItemId = stringProperty(rawItem, "id");
+      const playlistItemId = nonBlankStringProperty(rawItem, "id");
       const snippet = isRecord(rawItem.snippet) ? rawItem.snippet : undefined;
       const contentDetails = isRecord(rawItem.contentDetails)
         ? rawItem.contentDetails
@@ -255,34 +449,47 @@ export class GoogleInventoryProvider implements InventoryProvider {
       const videoId =
         contentDetails === undefined
           ? undefined
-          : stringProperty(contentDetails, "videoId");
+          : nonBlankStringProperty(contentDetails, "videoId");
       const title =
-        snippet === undefined ? undefined : stringProperty(snippet, "title");
+        snippet === undefined
+          ? undefined
+          : nonBlankStringProperty(snippet, "title");
       if (
         playlistItemId === undefined ||
         videoId === undefined ||
         title === undefined
       ) {
-        return [];
+        throw new InventoryServiceError(
+          "官方 API 返回的上传清单格式无效。",
+          "invalid-response",
+          false,
+        );
       }
-      return [
-        {
-          playlistItemId,
-          videoId,
-          title,
-          ...(snippet === undefined
-            ? {}
-            : optionalString(snippet, "publishedAt")),
-          ...(snippet === undefined ? {} : optionalNumber(snippet, "position")),
-          fetchedAt: new Date().toISOString(),
-        },
-      ];
+      return {
+        playlistItemId,
+        videoId,
+        title,
+        ...(snippet === undefined
+          ? {}
+          : optionalString(snippet, "publishedAt")),
+        ...(snippet === undefined ? {} : optionalNumber(snippet, "position")),
+        fetchedAt: new Date().toISOString(),
+      };
     });
+    const nextPageToken = isRecord(payload) ? payload.nextPageToken : undefined;
+    if (
+      nextPageToken !== undefined &&
+      (typeof nextPageToken !== "string" || nextPageToken.trim().length === 0)
+    ) {
+      throw new InventoryServiceError(
+        "官方 API 返回的上传清单分页令牌格式无效。",
+        "invalid-response",
+        false,
+      );
+    }
     return {
       items,
-      ...(optionalStringProperty(payload, "nextPageToken") === undefined
-        ? {}
-        : { nextPageToken: optionalStringProperty(payload, "nextPageToken") }),
+      ...(nextPageToken === undefined ? {} : { nextPageToken }),
       raw: payload,
     };
   }
@@ -300,11 +507,20 @@ export class GoogleInventoryProvider implements InventoryProvider {
       id: input.videoIds.join(","),
     }).toString();
     const payload = await this.request(url, input.accessToken);
-    const items = arrayProperty(payload, "items").flatMap((rawItem) => {
+    const rawItems = requiredArrayProperty(
+      payload,
+      "items",
+      "官方 API 返回的视频元数据格式无效。",
+    );
+    const items = rawItems.map((rawItem) => {
       if (!isRecord(rawItem)) {
-        return [];
+        throw new InventoryServiceError(
+          "官方 API 返回的视频元数据格式无效。",
+          "invalid-response",
+          false,
+        );
       }
-      const id = stringProperty(rawItem, "id");
+      const id = nonBlankStringProperty(rawItem, "id");
       const snippet = isRecord(rawItem.snippet) ? rawItem.snippet : undefined;
       const contentDetails = isRecord(rawItem.contentDetails)
         ? rawItem.contentDetails
@@ -313,38 +529,40 @@ export class GoogleInventoryProvider implements InventoryProvider {
         ? rawItem.statistics
         : undefined;
       const title =
-        snippet === undefined ? undefined : stringProperty(snippet, "title");
+        snippet === undefined
+          ? undefined
+          : nonBlankStringProperty(snippet, "title");
       if (id === undefined || title === undefined) {
-        return [];
+        throw new InventoryServiceError(
+          "官方 API 返回的视频元数据格式无效。",
+          "invalid-response",
+          false,
+        );
       }
-      return [
-        {
-          id,
-          ...(snippet === undefined
-            ? {}
-            : optionalString(snippet, "channelId")),
-          title,
-          ...(snippet === undefined
-            ? {}
-            : optionalString(snippet, "description")),
-          ...(snippet === undefined
-            ? {}
-            : optionalString(snippet, "publishedAt")),
-          ...(contentDetails === undefined
-            ? {}
-            : optionalString(contentDetails, "duration")),
-          ...(statistics === undefined
-            ? {}
-            : optionalNumberFromString(statistics, "viewCount")),
-          ...(statistics === undefined
-            ? {}
-            : optionalNumberFromString(statistics, "likeCount")),
-          ...(statistics === undefined
-            ? {}
-            : optionalNumberFromString(statistics, "commentCount")),
-          fetchedAt: new Date().toISOString(),
-        },
-      ];
+      return {
+        id,
+        ...(snippet === undefined ? {} : optionalString(snippet, "channelId")),
+        title,
+        ...(snippet === undefined
+          ? {}
+          : optionalString(snippet, "description")),
+        ...(snippet === undefined
+          ? {}
+          : optionalString(snippet, "publishedAt")),
+        ...(contentDetails === undefined
+          ? {}
+          : optionalString(contentDetails, "duration")),
+        ...(statistics === undefined
+          ? {}
+          : optionalNumberFromString(statistics, "viewCount")),
+        ...(statistics === undefined
+          ? {}
+          : optionalNumberFromString(statistics, "likeCount")),
+        ...(statistics === undefined
+          ? {}
+          : optionalNumberFromString(statistics, "commentCount")),
+        fetchedAt: new Date().toISOString(),
+      };
     });
     return { items, raw: payload };
   }
@@ -386,11 +604,15 @@ interface InventoryPaths {
   state: string;
   data: string;
   evidence: string;
+  migrationMarker: string;
 }
 
 async function resolveInventoryPaths(
   configPath: string,
   channelId: string,
+  scope: InventoryScope = DEFAULT_INVENTORY_SCOPE,
+  forceTaskDirectory = false,
+  channelConnectionId?: string,
 ): Promise<InventoryPaths> {
   if (!/^UC[A-Za-z0-9_-]{22}$/.test(channelId)) {
     throw new UserInputError("频道 ID 必须是有效的 YouTube 频道 ID。");
@@ -400,22 +622,40 @@ async function resolveInventoryPaths(
     dirname(validated.configPath),
     validated.config.global.dataDirectory,
   );
-  const root = resolve(dataDirectory, "inventory", channelId);
+  const channelRoot = resolve(dataDirectory, "inventory", channelId);
+  const scopeKey = inventoryScopeNames(scope).join("+");
+  const defaultScopeKey = inventoryScopeNames(DEFAULT_INVENTORY_SCOPE).join(
+    "+",
+  );
+  const root =
+    channelConnectionId === undefined
+      ? scopeKey === defaultScopeKey && !forceTaskDirectory
+        ? channelRoot
+        : resolve(channelRoot, "tasks", "youtube-data-api", scopeKey)
+      : resolve(
+          channelRoot,
+          "connections",
+          encodeURIComponent(channelConnectionId),
+          "tasks",
+          "youtube-data-api",
+          scopeKey,
+        );
   return {
     root,
     state: resolve(root, "sync-state.json"),
     data: resolve(root, "data.json"),
     evidence: resolve(root, "evidence"),
+    migrationMarker: resolve(root, "migration.json"),
   };
 }
 
-const inventoryStateSchema = z
+const inventoryStateFieldsSchema = z
   .object({
-    version: z.literal(1),
     channelId: z.string().min(1),
     status: z.enum([
       "not-started",
       "running",
+      "waiting",
       "partial",
       "completed",
       "failed",
@@ -433,13 +673,18 @@ const inventoryStateSchema = z
     }),
     checkpoint: z.object({
       uploadPageToken: z.string().min(1).optional(),
+      uploadsComplete: z.boolean().optional(),
       videoIndex: z.number().int().nonnegative(),
       videoIds: z.array(z.string().min(1)),
+      snapshotStartedFromBeginning: z.boolean().optional(),
+      seenUploadItemIds: z.array(z.string().min(1)).optional(),
+      seenVideoIds: z.array(z.string().min(1)).optional(),
     }),
     startedAt: z.string().min(1).optional(),
     updatedAt: z.string().min(1),
     lastSuccessAt: z.string().min(1).optional(),
     dataAsOf: z.string().min(1).optional(),
+    nextRetryAt: z.string().min(1).optional(),
     error: z
       .object({
         kind: z.string().min(1),
@@ -450,6 +695,25 @@ const inventoryStateSchema = z
       .optional(),
   })
   .strict();
+
+const inventoryStateSchema = z.discriminatedUnion("version", [
+  inventoryStateFieldsSchema.extend({ version: z.literal(1) }).strict(),
+  inventoryStateFieldsSchema
+    .extend({
+      version: z.literal(2),
+      channelConnectionId: z.string().min(1),
+    })
+    .strict(),
+]) as z.ZodType<InventorySyncState>;
+
+const inventoryMigrationMarkerSchema = z
+  .object({
+    version: z.literal(1),
+    channelId: z.string().min(1),
+    channelConnectionId: z.string().min(1),
+  })
+  .strict();
+type InventoryMigrationMarker = z.infer<typeof inventoryMigrationMarkerSchema>;
 
 const inventoryDataSchema = z
   .object({
@@ -499,12 +763,18 @@ const inventoryDataSchema = z
   })
   .strict() as unknown as z.ZodType<InventoryData>;
 
-function emptyState(channelId: string, now: string): InventorySyncState {
+function emptyState(
+  channelId: string,
+  channelConnectionId: string,
+  now: string,
+  scope: InventoryScope = DEFAULT_INVENTORY_SCOPE,
+): InventorySyncState {
   return {
-    version: 1,
+    version: 2,
     channelId,
+    channelConnectionId,
     status: "not-started",
-    scope: { ...DEFAULT_INVENTORY_SCOPE },
+    scope: { ...scope },
     phase: "channels",
     progress: { pages: 0, items: 0, videoItems: 0 },
     checkpoint: { videoIndex: 0, videoIds: [] },
@@ -563,6 +833,284 @@ async function saveJson(path: string, value: unknown): Promise<void> {
   await rename(temporaryPath, path);
 }
 
+async function loadOptionalJson<T>(
+  path: string,
+  schema: z.ZodType<T>,
+): Promise<T | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+    const validated = schema.safeParse(parsed);
+    if (!validated.success) {
+      throw new InventoryServiceError(
+        "本机频道数据文件格式无效，请先保留证据后重新同步。",
+        "invalid-response",
+        false,
+      );
+    }
+    return validated.data;
+  } catch (error) {
+    if (error instanceof InventoryServiceError) {
+      throw error;
+    }
+    if (isFsCode(error, "ENOENT")) {
+      return undefined;
+    }
+    if (error instanceof SyntaxError) {
+      throw new InventoryServiceError(
+        "本机频道数据文件格式无效，请先保留证据后重新同步。",
+        "invalid-response",
+        false,
+      );
+    }
+    throw new InventoryServiceError(
+      "无法读取本机频道数据文件。",
+      "network",
+      true,
+    );
+  }
+}
+
+type InventoryConnectionDependencies = Pick<
+  OAuthWorkflowDependencies,
+  "credentialStore" | "secretStore" | "now"
+>;
+
+async function resolveInventoryConnectionId(
+  configPath: string,
+  channelId: string,
+  dependencies: InventoryConnectionDependencies = {},
+): Promise<string> {
+  const status = await getChannelConnectionStatus(configPath, dependencies);
+  const matches = status.connections.filter(
+    (connection) => connection.channelId === channelId,
+  );
+  if (matches.length === 0) {
+    throw new UserInputError("目标频道尚未建立唯一的频道接入。");
+  }
+  if (matches.length > 1) {
+    throw new InventoryServiceError(
+      "目标频道存在多个频道接入，无法安全确定 Inventory 任务身份。",
+      "invalid-response",
+      false,
+    );
+  }
+  return matches[0].connectionId;
+}
+
+async function resolveInventoryTaskPaths(
+  configPath: string,
+  channelId: string,
+  channelConnectionId: string,
+  scope: InventoryScope,
+): Promise<InventoryPaths> {
+  const target = await resolveInventoryPaths(
+    configPath,
+    channelId,
+    scope,
+    true,
+    channelConnectionId,
+  );
+  const existingTarget = await loadOptionalJson(
+    target.state,
+    inventoryStateSchema,
+  );
+  if (existingTarget !== undefined) {
+    assertInventoryStateIdentity(
+      existingTarget,
+      channelId,
+      channelConnectionId,
+      scope,
+    );
+    return target;
+  }
+
+  const legacyScoped = await resolveInventoryPaths(
+    configPath,
+    channelId,
+    scope,
+    true,
+  );
+  const legacyScopedState = await loadOptionalJson(
+    legacyScoped.state,
+    inventoryStateSchema,
+  );
+  if (legacyScopedState !== undefined) {
+    assertLegacyInventoryStateIdentity(legacyScopedState, channelId, scope);
+    await migrateLegacyInventoryTask(
+      legacyScoped,
+      target,
+      legacyScopedState,
+      channelId,
+      channelConnectionId,
+    );
+    return target;
+  }
+
+  const legacyRoot = await resolveInventoryPaths(
+    configPath,
+    channelId,
+    DEFAULT_INVENTORY_SCOPE,
+  );
+  const legacyRootState = await loadOptionalJson(
+    legacyRoot.state,
+    inventoryStateSchema,
+  );
+  if (legacyRootState === undefined) {
+    return target;
+  }
+  if (legacyRootState.channelId !== channelId) {
+    throw new InventoryServiceError(
+      "旧版 Inventory 状态与目标频道不一致，已保留原文件。",
+      "invalid-response",
+      false,
+    );
+  }
+  if (sameInventoryScope(legacyRootState.scope, scope)) {
+    await migrateLegacyInventoryTask(
+      legacyRoot,
+      target,
+      legacyRootState,
+      channelId,
+      channelConnectionId,
+    );
+    return target;
+  }
+
+  const legacyRootTarget = await resolveInventoryPaths(
+    configPath,
+    channelId,
+    legacyRootState.scope,
+    true,
+    channelConnectionId,
+  );
+  await migrateLegacyInventoryTask(
+    legacyRoot,
+    legacyRootTarget,
+    legacyRootState,
+    channelId,
+    channelConnectionId,
+  );
+  return target;
+}
+
+function assertLegacyInventoryStateIdentity(
+  state: InventorySyncState,
+  channelId: string,
+  scope: InventoryScope,
+): void {
+  if (
+    state.channelId !== channelId ||
+    !sameInventoryScope(state.scope, scope)
+  ) {
+    throw new InventoryServiceError(
+      "旧版 Inventory 状态与请求的频道或范围不一致，已保留原文件。",
+      "invalid-response",
+      false,
+    );
+  }
+}
+
+function assertInventoryStateIdentity(
+  state: InventorySyncState,
+  channelId: string,
+  channelConnectionId: string,
+  scope: InventoryScope,
+): void {
+  if (
+    state.version !== 2 ||
+    state.channelConnectionId !== channelConnectionId ||
+    state.channelId !== channelId ||
+    !sameInventoryScope(state.scope, scope)
+  ) {
+    throw new InventoryServiceError(
+      "持久化任务身份与请求的频道接入或范围不一致，已保留原文件。",
+      "invalid-response",
+      false,
+    );
+  }
+}
+
+async function migrateLegacyInventoryTask(
+  legacy: InventoryPaths,
+  target: InventoryPaths,
+  legacyState: InventorySyncState,
+  channelId: string,
+  channelConnectionId: string,
+): Promise<void> {
+  const migrationMarker = await loadOptionalJson(
+    legacy.migrationMarker,
+    inventoryMigrationMarkerSchema,
+  );
+  if (migrationMarker !== undefined) {
+    if (
+      migrationMarker.channelId !== channelId ||
+      migrationMarker.channelConnectionId !== channelConnectionId
+    ) {
+      throw new InventoryServiceError(
+        "旧版 Inventory 数据已绑定其他频道接入，已保留原文件且未执行迁移。",
+        "invalid-response",
+        false,
+      );
+    }
+  }
+  const existingTarget = await loadOptionalJson(
+    target.state,
+    inventoryStateSchema,
+  );
+  if (existingTarget !== undefined) {
+    assertInventoryStateIdentity(
+      existingTarget,
+      channelId,
+      channelConnectionId,
+      legacyState.scope,
+    );
+    if (legacyState.version === 1 && migrationMarker === undefined) {
+      await saveJson(legacy.migrationMarker, {
+        version: 1,
+        channelId,
+        channelConnectionId,
+      } satisfies InventoryMigrationMarker);
+    }
+    return;
+  }
+  const legacyData =
+    (await loadOptionalJson(legacy.data, inventoryDataSchema)) ??
+    emptyData(channelId);
+  if (legacyData.channelId !== channelId) {
+    throw new InventoryServiceError(
+      "旧版频道数据与目标频道不一致，已保留原文件且未执行迁移。",
+      "invalid-response",
+      false,
+    );
+  }
+
+  if (
+    legacyState.version === 2 &&
+    legacyState.channelConnectionId !== channelConnectionId
+  ) {
+    throw new InventoryServiceError(
+      "旧版任务已绑定其他频道接入，已保留原文件且未执行迁移。",
+      "invalid-response",
+      false,
+    );
+  }
+  const migratedState: InventorySyncState = {
+    ...legacyState,
+    version: 2,
+    channelConnectionId,
+  };
+  await saveJson(target.data, legacyData);
+  await saveJson(target.state, migratedState);
+  if (legacyState.version === 1 && migrationMarker === undefined) {
+    const marker: InventoryMigrationMarker = {
+      version: 1,
+      channelId,
+      channelConnectionId,
+    };
+    await saveJson(legacy.migrationMarker, marker);
+  }
+}
+
 async function saveEvidence(
   paths: InventoryPaths,
   phase: string,
@@ -587,12 +1135,25 @@ async function saveEvidence(
 export async function getInventoryStatus(
   configPath: string,
   channelId: string,
+  selector: { scope?: InventoryScope } = {},
 ): Promise<InventorySyncResult> {
-  const paths = await resolveInventoryPaths(configPath, channelId);
+  const scope = normalizeInventoryScope(
+    selector.scope ?? DEFAULT_INVENTORY_SCOPE,
+  );
+  const channelConnectionId = await resolveInventoryConnectionId(
+    configPath,
+    channelId,
+  );
+  const paths = await resolveInventoryTaskPaths(
+    configPath,
+    channelId,
+    channelConnectionId,
+    scope,
+  );
   const now = new Date().toISOString();
   const state = await loadJson(
     paths.state,
-    emptyState(channelId, now),
+    emptyState(channelId, channelConnectionId, now, scope),
     inventoryStateSchema,
   );
   const data = await loadJson(
@@ -600,17 +1161,24 @@ export async function getInventoryStatus(
     emptyData(channelId),
     inventoryDataSchema,
   );
-  return { channelId, state, data };
+  assertInventoryTaskIdentity(
+    state,
+    data,
+    channelId,
+    channelConnectionId,
+    scope,
+  );
+  return inventoryResult(state, data);
 }
 
 export interface InventorySyncDependencies extends Pick<
   OAuthWorkflowDependencies,
-  "credentialStore" | "now"
+  "credentialStore" | "secretStore" | "tokenRefreshProvider" | "now"
 > {
   provider?: InventoryProvider;
 }
 
-export async function syncInventory(
+async function runSyncInventory(
   configPath: string,
   input: {
     channelId: string;
@@ -620,11 +1188,22 @@ export async function syncInventory(
   dependencies: InventorySyncDependencies = {},
 ): Promise<InventorySyncResult> {
   const nowFactory = dependencies.now ?? (() => new Date());
-  const paths = await resolveInventoryPaths(configPath, input.channelId);
+  const scope = normalizeInventoryScope(input.scope ?? DEFAULT_INVENTORY_SCOPE);
+  const channelConnectionId = await resolveInventoryConnectionId(
+    configPath,
+    input.channelId,
+    dependencies,
+  );
+  const paths = await resolveInventoryTaskPaths(
+    configPath,
+    input.channelId,
+    channelConnectionId,
+    scope,
+  );
   const now = nowFactory().toISOString();
   const previousState = await loadJson(
     paths.state,
-    emptyState(input.channelId, now),
+    emptyState(input.channelId, channelConnectionId, now, scope),
     inventoryStateSchema,
   );
   let state = previousState;
@@ -633,22 +1212,47 @@ export async function syncInventory(
     emptyData(input.channelId),
     inventoryDataSchema,
   );
-  const scope = input.scope ?? { ...DEFAULT_INVENTORY_SCOPE };
+  assertInventoryTaskIdentity(
+    previousState,
+    data,
+    input.channelId,
+    channelConnectionId,
+    scope,
+  );
   const shouldResume =
-    input.scope === undefined &&
-    (previousState.status === "partial" || previousState.status === "failed");
+    (previousState.status === "running" ||
+      previousState.status === "waiting" ||
+      previousState.status === "partial" ||
+      previousState.status === "failed") &&
+    sameInventoryScope(previousState.scope, scope);
   if (!shouldResume) {
-    state = {
-      ...emptyState(input.channelId, now),
+    const freshState = emptyState(
+      input.channelId,
+      channelConnectionId,
+      now,
       scope,
+    );
+    state = {
+      ...freshState,
       status: "running",
       startedAt: now,
+      checkpoint: {
+        ...freshState.checkpoint,
+        ...(scope.uploads
+          ? {
+              snapshotStartedFromBeginning: true,
+              seenUploadItemIds: [],
+              seenVideoIds: [],
+            }
+          : {}),
+      },
     };
   } else {
     state = {
       ...previousState,
       status: "running",
       updatedAt: now,
+      nextRetryAt: undefined,
       error: undefined,
     };
   }
@@ -670,7 +1274,13 @@ export async function syncInventory(
   const canContinue = () =>
     input.maxWorkUnits === undefined || workUnits < input.maxWorkUnits;
   try {
-    if ((scope.channel || scope.uploads) && canContinue()) {
+    const channelPhasePending =
+      state.phase === "channels" || data.channel === undefined;
+    if (
+      (scope.channel || scope.uploads) &&
+      channelPhasePending &&
+      canContinue()
+    ) {
       const result = await provider.listChannel({
         accessToken: access.accessToken,
         channelId: access.channelId,
@@ -708,7 +1318,12 @@ export async function syncInventory(
         false,
       );
     }
-    if (scope.uploads && uploadsPlaylistId !== undefined) {
+    const uploadsPending =
+      scope.uploads &&
+      state.checkpoint.uploadsComplete !== true &&
+      state.phase !== "videos" &&
+      state.phase !== "complete";
+    if (uploadsPending && uploadsPlaylistId !== undefined) {
       state = { ...state, phase: "uploads" };
       let pageToken = state.checkpoint.uploadPageToken;
       while (canContinue()) {
@@ -744,7 +1359,7 @@ export async function syncInventory(
         pageToken = result.nextPageToken;
         state = {
           ...state,
-          phase: result.nextPageToken === undefined ? "videos" : "uploads",
+          phase: "uploads",
           progress: {
             ...state.progress,
             pages: state.progress.pages + 1,
@@ -753,9 +1368,14 @@ export async function syncInventory(
           checkpoint: {
             ...state.checkpoint,
             uploadPageToken: result.nextPageToken,
+            uploadsComplete: result.nextPageToken === undefined,
             videoIds: unique([
               ...state.checkpoint.videoIds,
               ...result.items.map((item) => item.videoId),
+            ]),
+            seenUploadItemIds: unique([
+              ...(state.checkpoint.seenUploadItemIds ?? []),
+              ...result.items.map((item) => item.playlistItemId),
             ]),
           },
           updatedAt: fetchedAt,
@@ -769,11 +1389,18 @@ export async function syncInventory(
       }
     }
 
-    const videoIds = unique([
-      ...state.checkpoint.videoIds,
-      ...data.uploads.map((item) => item.videoId),
-    ]);
-    if (scope.videos && videoIds.length > state.checkpoint.videoIndex) {
+    const videoIds =
+      state.checkpoint.snapshotStartedFromBeginning === true
+        ? unique(state.checkpoint.videoIds)
+        : unique([
+            ...state.checkpoint.videoIds,
+            ...data.uploads.map((item) => item.videoId),
+          ]);
+    if (
+      scope.videos &&
+      videoIds.length > state.checkpoint.videoIndex &&
+      canContinue()
+    ) {
       state = {
         ...state,
         phase: "videos",
@@ -817,6 +1444,10 @@ export async function syncInventory(
             ...state.checkpoint,
             videoIds,
             videoIndex: state.checkpoint.videoIndex + batch.length,
+            seenVideoIds: unique([
+              ...(state.checkpoint.seenVideoIds ?? []),
+              ...result.items.map((item) => item.id),
+            ]),
           },
           updatedAt: fetchedAt,
         };
@@ -826,18 +1457,35 @@ export async function syncInventory(
       }
     }
 
+    const channelComplete =
+      !(scope.channel || scope.uploads) || data.channel !== undefined;
     const uploadsComplete =
-      !scope.uploads || state.phase === "videos" || state.phase === "complete";
+      !scope.uploads ||
+      state.checkpoint.uploadsComplete === true ||
+      state.phase === "videos" ||
+      state.phase === "complete";
     const videosComplete =
       !scope.videos || state.checkpoint.videoIndex >= videoIds.length;
-    const complete =
-      uploadsComplete &&
-      videosComplete &&
-      (!scope.channel || data.channel !== undefined) &&
-      (input.maxWorkUnits === undefined ||
-        workUnits < input.maxWorkUnits ||
-        state.phase === "complete");
+    const complete = channelComplete && uploadsComplete && videosComplete;
     const completedAt = nowFactory().toISOString();
+    if (complete && state.checkpoint.snapshotStartedFromBeginning === true) {
+      const seenUploadItemIds = new Set(
+        state.checkpoint.seenUploadItemIds ?? [],
+      );
+      data = {
+        ...data,
+        uploads: scope.uploads
+          ? data.uploads.filter((item) =>
+              seenUploadItemIds.has(item.playlistItemId),
+            )
+          : data.uploads,
+        videos: scope.videos
+          ? data.videos.filter((item) =>
+              (state.checkpoint.seenVideoIds ?? []).includes(item.id),
+            )
+          : data.videos,
+      };
+    }
     state = {
       ...state,
       status: complete ? "completed" : "partial",
@@ -847,9 +1495,11 @@ export async function syncInventory(
         ? {
             lastSuccessAt: completedAt,
             dataAsOf: data.dataAsOf ?? completedAt,
+            nextRetryAt: undefined,
             error: undefined,
           }
         : {
+            nextRetryAt: inventoryNextRetryAt(completedAt),
             error: {
               kind: "checkpoint",
               message: "本次同步已保存检查点，可继续执行以完成剩余范围。",
@@ -864,7 +1514,7 @@ export async function syncInventory(
     };
     await saveJson(paths.data, data);
     await saveJson(paths.state, state);
-    return { channelId: input.channelId, state, data };
+    return inventoryResult(state, data);
   } catch (error) {
     return finishInventoryFailure(
       state,
@@ -873,6 +1523,69 @@ export async function syncInventory(
       nowFactory().toISOString(),
       error,
     );
+  }
+}
+
+/** Execute one task while holding an inter-process lock for its task directory. */
+export async function syncInventory(
+  configPath: string,
+  input: {
+    channelId: string;
+    scope?: InventoryScope;
+    maxWorkUnits?: number;
+  },
+  dependencies: InventorySyncDependencies = {},
+): Promise<InventorySyncResult> {
+  const nowFactory = dependencies.now ?? (() => new Date());
+  const scope = normalizeInventoryScope(input.scope ?? DEFAULT_INVENTORY_SCOPE);
+  const channelConnectionId = await resolveInventoryConnectionId(
+    configPath,
+    input.channelId,
+    dependencies,
+  );
+  const paths = await resolveInventoryTaskPaths(
+    configPath,
+    input.channelId,
+    channelConnectionId,
+    scope,
+  );
+  await mkdir(paths.root, { recursive: true });
+  let release: (() => Promise<void>) | undefined;
+  try {
+    release = await lockfile.lock(paths.root, { retries: 0 });
+  } catch (error) {
+    if (!isFsCode(error, "ELOCKED")) {
+      throw error;
+    }
+    const now = nowFactory().toISOString();
+    const state = await loadJson(
+      paths.state,
+      emptyState(input.channelId, channelConnectionId, now, scope),
+      inventoryStateSchema,
+    );
+    const data = await loadJson(
+      paths.data,
+      emptyData(input.channelId),
+      inventoryDataSchema,
+    );
+    const nextState: InventorySyncState = {
+      ...state,
+      status: "waiting",
+      updatedAt: now,
+      error: {
+        kind: "busy",
+        message: "同一同步任务正在运行，请稍后重试。",
+        retryable: true,
+      },
+      nextRetryAt: inventoryNextRetryAt(now),
+    };
+    await saveJson(paths.state, nextState);
+    return inventoryResult(nextState, data);
+  }
+  try {
+    return await runSyncInventory(configPath, input, dependencies);
+  } finally {
+    await release?.();
   }
 }
 
@@ -893,10 +1606,11 @@ async function finishInventoryFailure(
         ? "partial"
         : "failed",
     updatedAt: now,
+    nextRetryAt: normalized.retryable ? inventoryNextRetryAt(now) : undefined,
     error: normalized,
   };
   await saveJson(paths.state, nextState);
-  return { channelId: state.channelId, state: nextState, data };
+  return inventoryResult(nextState, data);
 }
 
 function normalizeInventoryError(error: unknown): {
@@ -904,6 +1618,24 @@ function normalizeInventoryError(error: unknown): {
   message: string;
   retryable: boolean;
 } {
+  if (
+    error instanceof OAuthTokenRefreshError ||
+    (error instanceof Error &&
+      "kind" in error &&
+      typeof error.kind === "string" &&
+      "retryable" in error &&
+      typeof error.retryable === "boolean")
+  ) {
+    const structuredError = error as Error & {
+      kind: string;
+      retryable: boolean;
+    };
+    return {
+      kind: structuredError.kind,
+      message: structuredError.message,
+      retryable: structuredError.retryable,
+    };
+  }
   if (error instanceof InventoryServiceError) {
     return {
       kind: error.kind,
@@ -929,10 +1661,29 @@ function arrayProperty(value: unknown, key: string): unknown[] {
   return isRecord(value) && Array.isArray(value[key]) ? value[key] : [];
 }
 
+function requiredArrayProperty(
+  value: unknown,
+  key: string,
+  message: string,
+): unknown[] {
+  if (!isRecord(value) || !Array.isArray(value[key])) {
+    throw new InventoryServiceError(message, "invalid-response", false);
+  }
+  return value[key];
+}
+
 function stringProperty(value: unknown, key: string): string | undefined {
   return isRecord(value) && typeof value[key] === "string"
     ? value[key]
     : undefined;
+}
+
+function nonBlankStringProperty(
+  value: unknown,
+  key: string,
+): string | undefined {
+  const item = stringProperty(value, key);
+  return item === undefined || item.trim().length === 0 ? undefined : item;
 }
 
 function optionalStringProperty(
@@ -993,7 +1744,16 @@ export async function pruneInventoryEvidence(
   channelId: string,
   before: Date,
 ): Promise<{ removed: number; channelId: string; before: string }> {
-  const paths = await resolveInventoryPaths(configPath, channelId);
+  const channelConnectionId = await resolveInventoryConnectionId(
+    configPath,
+    channelId,
+  );
+  const paths = await resolveInventoryTaskPaths(
+    configPath,
+    channelId,
+    channelConnectionId,
+    DEFAULT_INVENTORY_SCOPE,
+  );
   let removed = 0;
   let entries: string[] = [];
   try {

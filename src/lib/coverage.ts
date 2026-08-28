@@ -6,6 +6,7 @@ import {
   validateChannelOperationsConfig,
 } from "./config.js";
 import { getInventoryStatus } from "./inventory.js";
+import { getChannelConnectionStatus } from "./oauth.js";
 import { getReportingStatus } from "./reporting.js";
 
 export type CoverageMatrixStatus =
@@ -41,8 +42,16 @@ export async function getCoverageMatrix(
   configPath: string,
   channelId: string,
 ): Promise<CoverageMatrix> {
+  const connectionStatus = await getChannelConnectionStatus(configPath);
+  const inventoryConnections = connectionStatus.connections.filter(
+    (connection) => connection.channelId === channelId,
+  );
+  const inventoryConnection =
+    inventoryConnections.length === 1 ? inventoryConnections[0] : undefined;
   const [inventory, analytics, reporting, comments] = await Promise.all([
-    getInventoryStatus(configPath, channelId),
+    inventoryConnection === undefined
+      ? Promise.resolve(undefined)
+      : getInventoryStatus(configPath, channelId),
     getAnalyticsStatus(configPath, channelId),
     getReportingStatus(configPath, channelId),
     getCommentsStatus(configPath, channelId),
@@ -52,21 +61,39 @@ export async function getCoverageMatrix(
     dirname(validated.configPath),
     validated.config.global.dataDirectory,
   );
-  const inventoryEvidence = resolve(
-    dataDirectory,
-    "inventory",
-    channelId,
-    "evidence",
-  );
+  const inventoryEvidence =
+    inventoryConnection === undefined
+      ? []
+      : [
+          resolve(
+            dataDirectory,
+            "inventory",
+            channelId,
+            "connections",
+            encodeURIComponent(inventoryConnection.connectionId),
+            "tasks",
+            "youtube-data-api",
+            "channel+uploads+videos",
+            "evidence",
+          ),
+        ];
+  const inventoryUnavailableReason =
+    inventoryConnections.length === 0
+      ? "目标频道尚未建立唯一的频道接入。"
+      : inventoryConnections.length > 1
+        ? "目标频道存在多个频道接入，无法安全确定 Inventory 任务身份。"
+        : undefined;
 
   const inventoryStatus: CoverageMatrixStatus =
-    inventory.state.status === "completed"
-      ? "supported"
-      : inventory.state.status === "partial"
-        ? "partial"
-        : inventory.state.status === "failed"
-          ? "unavailable"
-          : "partial";
+    inventory === undefined
+      ? "unavailable"
+      : inventory.state.status === "completed"
+        ? "supported"
+        : inventory.state.status === "partial"
+          ? "partial"
+          : inventory.state.status === "failed"
+            ? "unavailable"
+            : "partial";
   const analyticsStatus: CoverageMatrixStatus =
     analytics.state.coverage === "permission-denied"
       ? "qualification-limited"
@@ -102,16 +129,18 @@ export async function getCoverageMatrix(
     entries: [
       {
         capability: "inventory.metadata",
-        source: inventory.data.source,
+        source: inventory?.data.source ?? "youtube-data-api",
         status: inventoryStatus,
         scope: "频道、上传播放列表和视频元数据",
-        ...(inventory.state.dataAsOf === undefined
+        ...(inventory?.state.dataAsOf === undefined
           ? {}
           : { dataAsOf: inventory.state.dataAsOf }),
-        ...(inventory.state.error === undefined
-          ? {}
-          : { reason: inventory.state.error.message }),
-        evidencePaths: safeEvidencePaths([inventoryEvidence]),
+        ...(inventoryUnavailableReason !== undefined
+          ? { reason: inventoryUnavailableReason }
+          : inventory?.state.error === undefined
+            ? {}
+            : { reason: inventory.state.error.message }),
+        evidencePaths: safeEvidencePaths(inventoryEvidence),
       },
       {
         capability: "analytics.core",

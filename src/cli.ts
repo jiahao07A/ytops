@@ -26,6 +26,14 @@ import {
   ReportingServiceError,
   UserInputError,
 } from "./lib/errors.js";
+import {
+  externalToolErrorCode,
+  inventorySyncFailure,
+  schedulerRunFailure,
+  oauthRefreshFailure,
+  type CliFailure,
+} from "./lib/cli-contract.js";
+import { ExternalToolError } from "./lib/process.js";
 import { clipMedia, extractAudio, probeMedia } from "./lib/media.js";
 import {
   downloadMedia,
@@ -40,6 +48,7 @@ import {
   completeChannelOAuth,
   getChannelConnectionStatus,
   GoogleOAuthProvider,
+  OAuthTokenRefreshError,
   selectChannelConnection,
   YOUTUBE_ANALYTICS_READONLY_SCOPE,
   YOUTUBE_FORCE_SSL_SCOPE,
@@ -73,6 +82,12 @@ import {
   syncComments,
 } from "./lib/comments.js";
 import { getCoverageMatrix } from "./lib/coverage.js";
+import { runDueInventoryTasks } from "./lib/scheduler.js";
+import {
+  disableTaskScheduler,
+  getTaskSchedulerStatus,
+  installTaskScheduler,
+} from "./lib/task-scheduler.js";
 
 interface GlobalOptions {
   json?: boolean;
@@ -80,11 +95,7 @@ interface GlobalOptions {
 
 interface ErrorPayload {
   ok: false;
-  error: {
-    code: string;
-    message: string;
-    details?: string;
-  };
+  error: CliFailure;
 }
 
 const program = new Command();
@@ -503,11 +514,25 @@ function readableError(error: unknown): ErrorPayload["error"] {
   if (error instanceof UserInputError) {
     return { code: error.code, message: safeErrorMessage(error.message) };
   }
+  if (error instanceof ExternalToolError) {
+    return {
+      code: externalToolErrorCode(error.kind),
+      message: safeErrorMessage(error.message),
+      details: safeErrorMessage(error.stderr || "外部工具没有返回可读错误。"),
+    };
+  }
   if (error instanceof ExternalCommandError) {
     return {
       code: error.code,
       message: safeErrorMessage(error.message),
       details: safeErrorMessage(error.stderr || "外部工具没有返回可读错误。"),
+    };
+  }
+  if (error instanceof OAuthTokenRefreshError) {
+    const failure = oauthRefreshFailure(error);
+    return {
+      ...failure,
+      message: safeErrorMessage(failure.message),
     };
   }
   if (error instanceof OAuthServiceError) {
@@ -547,23 +572,38 @@ function readableError(error: unknown): ErrorPayload["error"] {
   return { code: "UNEXPECTED", message: "发生未知错误。" };
 }
 
-async function execute(
+function emitError(error: ErrorPayload["error"]): void {
+  const payload: ErrorPayload = { ok: false, error };
+  if (wantsJson()) {
+    console.log(JSON.stringify(payload, null, 2));
+  } else {
+    console.error(`错误：${payload.error.message}`);
+    if (payload.error.details !== undefined) {
+      console.error(
+        typeof payload.error.details === "string"
+          ? payload.error.details
+          : JSON.stringify(payload.error.details, null, 2),
+      );
+    }
+  }
+  process.exitCode = 1;
+}
+
+async function execute<T>(
   title: string,
-  task: () => Promise<unknown>,
+  task: () => Promise<T>,
+  classifyResult?: (result: T) => CliFailure | undefined,
 ): Promise<void> {
   try {
-    emit(await task(), title);
-  } catch (error) {
-    const payload: ErrorPayload = { ok: false, error: readableError(error) };
-    if (wantsJson()) {
-      console.log(JSON.stringify(payload, null, 2));
-    } else {
-      console.error(`错误：${payload.error.message}`);
-      if (payload.error.details) {
-        console.error(payload.error.details);
-      }
+    const result = await task();
+    const failure = classifyResult?.(result);
+    if (failure !== undefined) {
+      emitError(failure);
+      return;
     }
-    process.exitCode = 1;
+    emit(result, title);
+  } catch (error) {
+    emitError(readableError(error));
   }
 }
 
@@ -1030,15 +1070,20 @@ channelOperations
   .option("--scope <items>", "同步范围：channel、uploads、videos；默认全部")
   .action(
     async (options: { config: string; channel: string; scope?: string }) =>
-      execute("频道基础数据同步", () =>
-        syncInventory(
-          options.config,
-          {
-            channelId: options.channel,
-            scope: parseInventoryScope(options.scope),
-          },
-          { provider: new GoogleInventoryProvider() },
-        ),
+      execute(
+        "频道基础数据同步",
+        () =>
+          syncInventory(
+            options.config,
+            {
+              channelId: options.channel,
+              ...(options.scope === undefined
+                ? {}
+                : { scope: parseInventoryScope(options.scope) }),
+            },
+            { provider: new GoogleInventoryProvider() },
+          ),
+        inventorySyncFailure,
       ),
   );
 
@@ -1047,9 +1092,65 @@ channelOperations
   .description("查询频道基础数据同步状态、检查点和数据截至时间")
   .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
   .requiredOption("--channel <channel-id>", "要查询的已接入频道 ID")
-  .action(async (options: { config: string; channel: string }) =>
-    execute("频道基础数据同步状态", () =>
-      getInventoryStatus(options.config, options.channel),
+  .option("--scope <items>", "同步范围：channel、uploads、videos；默认全部")
+  .action(
+    async (options: { config: string; channel: string; scope?: string }) =>
+      execute("频道基础数据同步状态", () =>
+        getInventoryStatus(
+          options.config,
+          options.channel,
+          options.scope === undefined
+            ? undefined
+            : { scope: parseInventoryScope(options.scope) },
+        ),
+      ),
+  );
+
+const scheduler = channelOperations
+  .command("scheduler")
+  .description("运行和管理一次性频道同步调度周期");
+
+scheduler
+  .command("run")
+  .description("运行所有已到期的频道 Inventory 任务")
+  .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
+  .action(async (options: { config: string }) =>
+    execute(
+      "频道同步调度周期",
+      () => runDueInventoryTasks(options.config),
+      schedulerRunFailure,
+    ),
+  );
+
+scheduler
+  .command("install")
+  .description("预览或确认安装 Windows 定期调度任务")
+  .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
+  .option("--yes", "确认执行本机调度适配器状态变更")
+  .action(async (options: { config: string; yes?: boolean }) =>
+    execute("安装频道同步调度任务", () =>
+      installTaskScheduler(options.config, options.yes === true),
+    ),
+  );
+
+scheduler
+  .command("status")
+  .description("查看 Windows 定期调度任务状态及配置漂移")
+  .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
+  .action(async (options: { config: string }) =>
+    execute("频道同步调度任务状态", () =>
+      getTaskSchedulerStatus(options.config),
+    ),
+  );
+
+scheduler
+  .command("disable")
+  .description("预览或确认停用 Windows 定期调度任务")
+  .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
+  .option("--yes", "确认执行本机调度适配器状态变更")
+  .action(async (options: { config: string; yes?: boolean }) =>
+    execute("停用频道同步调度任务", () =>
+      disableTaskScheduler(options.config, options.yes === true),
     ),
   );
 

@@ -8,6 +8,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { execa } from "execa";
+import { OAuth2Client, type Credentials } from "google-auth-library";
 import { z } from "zod";
 import {
   containsCredentialLikeText,
@@ -47,9 +48,47 @@ export interface ChannelSummary {
 export interface OAuthToken {
   accessToken: string;
   refreshToken: string;
+  clientId?: string;
   expiresAt?: string;
   tokenType?: string;
   scope?: string;
+}
+
+export interface OAuthRefreshResult {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  tokenType?: string;
+  scope?: string;
+}
+
+export interface OAuthTokenRefreshProvider {
+  refreshAccessToken(input: {
+    clientId: string;
+    clientSecret: string;
+    refreshToken: string;
+  }): Promise<OAuthRefreshResult>;
+}
+
+export type OAuthFailureKind =
+  | "invalid-grant"
+  | "revoked"
+  | "missing-refresh-token"
+  | "missing-client-id"
+  | "missing-client-secret"
+  | "credential-store"
+  | "network"
+  | "invalid-response";
+
+export class OAuthTokenRefreshError extends OAuthServiceError {
+  constructor(
+    message: string,
+    readonly kind: OAuthFailureKind,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "OAuthTokenRefreshError";
+  }
 }
 
 export interface OAuthProvider {
@@ -113,10 +152,27 @@ export class MemoryCredentialStore
 }
 
 type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
+type GoogleOAuthRefreshClient = Pick<
+  OAuth2Client,
+  "credentials" | "getAccessToken" | "on" | "setCredentials"
+>;
+type GoogleOAuthRefreshClientFactory = (input: {
+  clientId: string;
+  clientSecret: string;
+}) => GoogleOAuthRefreshClient;
 
-export class GoogleOAuthProvider implements OAuthProvider {
+export class GoogleOAuthProvider
+  implements OAuthProvider, OAuthTokenRefreshProvider
+{
   constructor(
     private readonly fetcher: Fetcher = globalThis.fetch.bind(globalThis),
+    private readonly refreshClientFactory: GoogleOAuthRefreshClientFactory = (
+      input,
+    ) =>
+      new OAuth2Client({
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+      }),
   ) {}
 
   createAuthorizationUrl(input: {
@@ -185,6 +241,78 @@ export class GoogleOAuthProvider implements OAuthProvider {
       ...(stringProperty(payload, "scope") === undefined
         ? {}
         : { scope: stringProperty(payload, "scope") }),
+    };
+  }
+
+  async refreshAccessToken(input: {
+    clientId: string;
+    clientSecret: string;
+    refreshToken: string;
+  }): Promise<OAuthRefreshResult> {
+    const client = this.refreshClientFactory({
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+    });
+    let emittedCredentials: Credentials | undefined;
+    client.on("tokens", (credentials) => {
+      emittedCredentials = credentials;
+    });
+    client.setCredentials({ refresh_token: input.refreshToken });
+
+    let accessTokenResponse: unknown;
+    try {
+      accessTokenResponse = await client.getAccessToken();
+    } catch (error) {
+      throw mapGoogleRefreshError(error);
+    }
+
+    const credentials = emittedCredentials ?? client.credentials;
+    const responseAccessToken =
+      typeof accessTokenResponse === "string"
+        ? accessTokenResponse
+        : stringProperty(accessTokenResponse, "token");
+    const accessToken =
+      nonEmptyString(responseAccessToken) ??
+      nonEmptyString(credentials.access_token ?? undefined);
+    if (accessToken === undefined) {
+      throw new OAuthTokenRefreshError(
+        "Google OAuth 刷新响应缺少访问令牌。",
+        "invalid-response",
+        true,
+      );
+    }
+
+    const expiryDate = credentials.expiry_date;
+    const expiryInstant =
+      expiryDate === null || expiryDate === undefined
+        ? undefined
+        : new Date(expiryDate);
+    if (
+      expiryDate !== null &&
+      expiryDate !== undefined &&
+      (!Number.isFinite(expiryDate) ||
+        expiryDate <= 0 ||
+        Number.isNaN(expiryInstant?.getTime()))
+    ) {
+      throw new OAuthTokenRefreshError(
+        "Google OAuth 刷新响应包含无效的过期时间。",
+        "invalid-response",
+        true,
+      );
+    }
+    const refreshToken = nonEmptyString(
+      emittedCredentials?.refresh_token ?? undefined,
+    );
+    const tokenType = nonEmptyString(credentials.token_type ?? undefined);
+    const scope = nonEmptyString(credentials.scope);
+    return {
+      accessToken,
+      ...(refreshToken === undefined ? {} : { refreshToken }),
+      ...(expiryInstant === undefined
+        ? {}
+        : { expiresAt: expiryInstant.toISOString() }),
+      ...(tokenType === undefined ? {} : { tokenType }),
+      ...(scope === undefined ? {} : { scope }),
     };
   }
 
@@ -378,6 +506,7 @@ export interface ChannelConnectionStatus {
 
 export interface OAuthWorkflowDependencies {
   provider?: OAuthProvider;
+  tokenRefreshProvider?: OAuthTokenRefreshProvider;
   credentialStore?: CredentialStore;
   secretStore?: ProtectedSecretStore;
   now?: () => Date;
@@ -410,6 +539,72 @@ function stringProperty(value: unknown, key: string): string | undefined {
     return undefined;
   }
   return value[key] as string;
+}
+
+function nonEmptyString(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized === undefined || normalized.length === 0
+    ? undefined
+    : normalized;
+}
+
+function mapGoogleRefreshError(error: unknown): OAuthTokenRefreshError {
+  if (error instanceof OAuthTokenRefreshError) {
+    return error;
+  }
+  const errorRecord = isRecord(error) ? error : undefined;
+  const response =
+    errorRecord !== undefined && isRecord(errorRecord.response)
+      ? errorRecord.response
+      : undefined;
+  const responseData =
+    response !== undefined && isRecord(response.data)
+      ? response.data
+      : undefined;
+  const upstreamCode =
+    responseData === undefined
+      ? undefined
+      : stringProperty(responseData, "error");
+  const statusFromResponse =
+    response === undefined ? undefined : numberProperty(response, "status");
+  const status =
+    statusFromResponse ??
+    (errorRecord === undefined
+      ? undefined
+      : numberProperty(errorRecord, "status"));
+  if (upstreamCode === "invalid_grant") {
+    return new OAuthTokenRefreshError(
+      "Google OAuth 拒绝了刷新凭据，请重新完成授权。",
+      "invalid-grant",
+      false,
+    );
+  }
+  if (status === 401 || status === 403) {
+    return new OAuthTokenRefreshError(
+      "Google OAuth 凭据已被撤销或失效，请重新完成授权。",
+      "revoked",
+      false,
+    );
+  }
+  if (status === 408 || status === 429) {
+    return new OAuthTokenRefreshError(
+      "Google OAuth 服务暂时无法完成令牌刷新，请稍后重试。",
+      "network",
+      true,
+    );
+  }
+  if (response !== undefined && status !== undefined && status < 500) {
+    return new OAuthTokenRefreshError(
+      "Google OAuth 返回了无法识别的刷新失败响应。",
+      "invalid-response",
+      false,
+    );
+  }
+  return new OAuthTokenRefreshError(
+    "无法连接 Google OAuth 服务以刷新访问令牌，请稍后重试。",
+    "network",
+    true,
+  );
 }
 
 function numberProperty(value: unknown, key: string): number | undefined {
@@ -446,25 +641,60 @@ type CredentialInspection =
 const MISSING_CREDENTIAL_REASON =
   "找不到关联的受保护 OAuth 凭据，请重新完成授权。";
 const EXPIRED_CREDENTIAL_REASON = "OAuth 访问令牌已过期，请重新完成授权。";
+const INVALID_EXPIRY_REASON =
+  "OAuth 凭据包含无效的访问令牌过期时间，请重新完成授权。";
+const MISSING_CLIENT_ID_REASON = "OAuth 凭据缺少客户端 ID，请重新完成授权。";
+const MISSING_CLIENT_SECRET_REASON =
+  "OAuth 凭据缺少受保护的客户端秘密，请重新完成授权。";
 const UNREADABLE_CREDENTIAL_REASON =
   "无法读取关联的受保护 OAuth 凭据，请重新完成授权。";
+
+type TokenExpirationState = "valid" | "expired" | "invalid";
+
+function getTokenExpirationState(
+  token: OAuthToken,
+  now: Date,
+): TokenExpirationState {
+  if (token.expiresAt === undefined) {
+    return "valid";
+  }
+  const expiresAt = Date.parse(token.expiresAt);
+  if (Number.isNaN(expiresAt)) {
+    return "invalid";
+  }
+  return expiresAt <= now.getTime() ? "expired" : "valid";
+}
 
 async function inspectCredential(
   store: CredentialStore,
   credentialRef: string,
   now: Date,
   provider?: OAuthProvider,
+  secretStore?: ProtectedSecretStore,
 ): Promise<CredentialInspection> {
   try {
     const token = await store.get(credentialRef);
     if (token === undefined) {
       return { available: false, reason: MISSING_CREDENTIAL_REASON };
     }
-    if (token.expiresAt !== undefined) {
-      const expiresAt = Date.parse(token.expiresAt);
-      if (!Number.isNaN(expiresAt) && expiresAt <= now.getTime()) {
+    const expirationState = getTokenExpirationState(token, now);
+    if (expirationState === "invalid") {
+      return { available: false, reason: INVALID_EXPIRY_REASON };
+    }
+    if (expirationState === "expired") {
+      if (token.refreshToken.trim().length === 0) {
         return { available: false, reason: EXPIRED_CREDENTIAL_REASON };
       }
+      if (token.clientId === undefined || token.clientId.trim().length === 0) {
+        return { available: false, reason: MISSING_CLIENT_ID_REASON };
+      }
+      const clientSecret = (
+        await secretStore?.getSecret(GOOGLE_CLIENT_SECRET_KEY)
+      )?.trim();
+      if (clientSecret === undefined || clientSecret.length === 0) {
+        return { available: false, reason: MISSING_CLIENT_SECRET_REASON };
+      }
+      return { available: true };
     }
     if (provider !== undefined) {
       await provider.listChannels({ accessToken: token.accessToken });
@@ -498,6 +728,7 @@ async function toPublicStatus(
   credentialStore: CredentialStore,
   now: Date,
   provider?: OAuthProvider,
+  secretStore?: ProtectedSecretStore,
 ): Promise<ChannelConnectionStatus> {
   const inspections = await Promise.all(
     state.connections.map((connection) =>
@@ -506,6 +737,7 @@ async function toPublicStatus(
         connection.credentialRef,
         now,
         provider,
+        secretStore,
       ),
     ),
   );
@@ -520,6 +752,7 @@ async function toPublicStatus(
           state.selectionCredentialRef,
           now,
           provider,
+          secretStore,
         );
   const selectedConnectionIndex =
     state.selectedChannelId === undefined
@@ -641,6 +874,31 @@ function asProtectedSecretStore(
     : undefined;
 }
 
+const credentialStoreWriteTails = new Map<string, Promise<void>>();
+
+async function withCredentialStoreWriteLock<T>(
+  path: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const lockKey = resolve(path);
+  const previous = credentialStoreWriteTails.get(lockKey) ?? Promise.resolve();
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolveGate) => {
+    release = resolveGate;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  credentialStoreWriteTails.set(lockKey, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release?.();
+    if (credentialStoreWriteTails.get(lockKey) === tail) {
+      credentialStoreWriteTails.delete(lockKey);
+    }
+  }
+}
+
 export class WindowsDpapiCredentialStore
   implements CredentialStore, ProtectedSecretStore
 {
@@ -670,15 +928,16 @@ export class WindowsDpapiCredentialStore
   }
 
   async set(key: string, token: OAuthToken): Promise<void> {
-    const values = await this.readValues();
-    values[key] = await protectWithWindowsDpapi(JSON.stringify(token));
-    await this.writeValues(values);
+    const protectedToken = await protectWithWindowsDpapi(JSON.stringify(token));
+    await this.updateValues((values) => {
+      values[key] = protectedToken;
+    });
   }
 
   async remove(key: string): Promise<void> {
-    const values = await this.readValues();
-    delete values[key];
-    await this.writeValues(values);
+    await this.updateValues((values) => {
+      delete values[key];
+    });
   }
 
   async getSecret(key: string): Promise<string | undefined> {
@@ -695,9 +954,20 @@ export class WindowsDpapiCredentialStore
   }
 
   async setSecret(key: string, value: string): Promise<void> {
-    const values = await this.readValues();
-    values[key] = await protectWithWindowsDpapi(value);
-    await this.writeValues(values);
+    const protectedValue = await protectWithWindowsDpapi(value);
+    await this.updateValues((values) => {
+      values[key] = protectedValue;
+    });
+  }
+
+  private async updateValues(
+    update: (values: Record<string, string>) => void,
+  ): Promise<void> {
+    await withCredentialStoreWriteLock(this.path, async () => {
+      const values = await this.readValues();
+      update(values);
+      await this.writeValues(values);
+    });
   }
 
   private async writeValues(values: Record<string, string>): Promise<void> {
@@ -910,7 +1180,10 @@ export async function completeChannelOAuth(
 
   await secretStore?.setSecret(GOOGLE_CLIENT_SECRET_KEY, clientSecret);
   const credentialRef = randomUUID();
-  await credentialStore.set(credentialRef, token);
+  await credentialStore.set(credentialRef, {
+    ...token,
+    clientId: pending.clientId,
+  });
   try {
     await saveState(paths.statePath, {
       ...stateStore,
@@ -935,6 +1208,7 @@ export async function completeChannelOAuth(
     credentialStore,
     now,
     provider,
+    secretStore,
   );
 }
 
@@ -1001,14 +1275,20 @@ export async function selectChannelConnection(
     ],
   };
   await saveState(paths.statePath, nextState);
-  return toPublicStatus(nextState, credentialStore, now, dependencies.provider);
+  return toPublicStatus(
+    nextState,
+    credentialStore,
+    now,
+    dependencies.provider,
+    dependencies.secretStore ?? asProtectedSecretStore(credentialStore),
+  );
 }
 
 export async function getChannelConnectionStatus(
   configPath: string,
   dependencies: Pick<
     OAuthWorkflowDependencies,
-    "credentialStore" | "provider" | "now"
+    "credentialStore" | "secretStore" | "provider" | "now"
   > = {},
 ): Promise<ChannelConnectionStatus> {
   const paths = await resolveWorkflowPaths(configPath);
@@ -1020,13 +1300,174 @@ export async function getChannelConnectionStatus(
     credentialStore,
     (dependencies.now ?? (() => new Date()))(),
     dependencies.provider,
+    dependencies.secretStore ?? asProtectedSecretStore(credentialStore),
   );
+}
+
+const credentialRefreshFlights = new Map<string, Promise<OAuthToken>>();
+
+async function refreshCredential(input: {
+  credentialRef: string;
+  credentialStore: CredentialStore;
+  secretStore?: ProtectedSecretStore;
+  tokenRefreshProvider?: OAuthTokenRefreshProvider;
+  now: Date;
+}): Promise<OAuthToken> {
+  const existingFlight = credentialRefreshFlights.get(input.credentialRef);
+  if (existingFlight !== undefined) {
+    return existingFlight;
+  }
+
+  const flight = (async (): Promise<OAuthToken> => {
+    const current = await input.credentialStore.get(input.credentialRef);
+    if (current === undefined) {
+      throw new OAuthServiceError(
+        "找不到当前频道接入关联的受保护 OAuth 凭据，请重新授权。",
+      );
+    }
+    const expirationState = getTokenExpirationState(current, input.now);
+    if (expirationState === "invalid") {
+      throw new OAuthTokenRefreshError(
+        "OAuth 凭据包含无效的访问令牌过期时间，请重新完成授权。",
+        "invalid-response",
+        false,
+      );
+    }
+    if (expirationState === "valid") {
+      return current;
+    }
+    if (current.refreshToken.trim().length === 0) {
+      throw new OAuthTokenRefreshError(
+        "OAuth 凭据缺少刷新令牌，请重新完成授权。",
+        "missing-refresh-token",
+        false,
+      );
+    }
+    if (
+      current.clientId === undefined ||
+      current.clientId.trim().length === 0
+    ) {
+      throw new OAuthTokenRefreshError(
+        "OAuth 凭据缺少客户端 ID，请重新完成授权。",
+        "missing-client-id",
+        false,
+      );
+    }
+    const clientSecret = (
+      await input.secretStore?.getSecret(GOOGLE_CLIENT_SECRET_KEY)
+    )?.trim();
+    if (clientSecret === undefined || clientSecret.length === 0) {
+      throw new OAuthTokenRefreshError(
+        "OAuth 凭据缺少受保护的客户端秘密，请重新完成授权。",
+        "missing-client-secret",
+        false,
+      );
+    }
+
+    let refreshed: OAuthRefreshResult;
+    try {
+      refreshed = await (
+        input.tokenRefreshProvider ?? new GoogleOAuthProvider()
+      ).refreshAccessToken({
+        clientId: current.clientId,
+        clientSecret,
+        refreshToken: current.refreshToken,
+      });
+    } catch (error) {
+      if (error instanceof OAuthTokenRefreshError) {
+        throw error;
+      }
+      throw new OAuthTokenRefreshError(
+        "无法连接 Google OAuth 服务以刷新访问令牌，请稍后重试。",
+        "network",
+        true,
+      );
+    }
+
+    const refreshPayload: unknown = refreshed;
+    if (!isRecord(refreshPayload)) {
+      throw new OAuthTokenRefreshError(
+        "Google OAuth 返回的刷新响应无效，请稍后重试。",
+        "invalid-response",
+        true,
+      );
+    }
+    const accessToken = nonEmptyString(
+      stringProperty(refreshPayload, "accessToken"),
+    );
+    const refreshTokenWasReturned = "refreshToken" in refreshPayload;
+    const rotatedRefreshToken = nonEmptyString(
+      stringProperty(refreshPayload, "refreshToken"),
+    );
+    const expiresAtWasReturned = "expiresAt" in refreshPayload;
+    const refreshedExpiresAt = stringProperty(refreshPayload, "expiresAt");
+    const expiresAt =
+      refreshedExpiresAt === undefined
+        ? undefined
+        : Date.parse(refreshedExpiresAt);
+    if (
+      accessToken === undefined ||
+      (refreshTokenWasReturned && rotatedRefreshToken === undefined) ||
+      (expiresAtWasReturned && refreshedExpiresAt === undefined) ||
+      (expiresAt !== undefined &&
+        (Number.isNaN(expiresAt) || expiresAt <= input.now.getTime()))
+    ) {
+      throw new OAuthTokenRefreshError(
+        "Google OAuth 返回的刷新响应无效，请稍后重试。",
+        "invalid-response",
+        true,
+      );
+    }
+
+    const nextToken: OAuthToken = {
+      accessToken,
+      refreshToken: rotatedRefreshToken ?? current.refreshToken,
+      clientId: current.clientId,
+      ...(refreshedExpiresAt === undefined
+        ? {}
+        : { expiresAt: refreshedExpiresAt }),
+      ...((stringProperty(refreshPayload, "tokenType") ?? current.tokenType) ===
+      undefined
+        ? {}
+        : {
+            tokenType:
+              stringProperty(refreshPayload, "tokenType") ?? current.tokenType,
+          }),
+      ...((stringProperty(refreshPayload, "scope") ?? current.scope) ===
+      undefined
+        ? {}
+        : {
+            scope: stringProperty(refreshPayload, "scope") ?? current.scope,
+          }),
+    };
+    try {
+      await input.credentialStore.set(input.credentialRef, nextToken);
+    } catch {
+      throw new OAuthTokenRefreshError(
+        "无法原子保存刷新后的 OAuth 凭据，请稍后重试。",
+        "credential-store",
+        true,
+      );
+    }
+    return nextToken;
+  })();
+  credentialRefreshFlights.set(input.credentialRef, flight);
+  try {
+    return await flight;
+  } finally {
+    if (credentialRefreshFlights.get(input.credentialRef) === flight) {
+      credentialRefreshFlights.delete(input.credentialRef);
+    }
+  }
 }
 
 export async function getChannelAccessToken(
   configPath: string,
   channelId?: string,
-  dependencies: Pick<OAuthWorkflowDependencies, "credentialStore" | "now"> = {},
+  dependencies: Pick<
+    OAuthWorkflowDependencies,
+    "credentialStore" | "secretStore" | "tokenRefreshProvider" | "now"
+  > = {},
 ): Promise<{ channelId: string; accessToken: string }> {
   const paths = await resolveWorkflowPaths(configPath);
   const state = await loadState(paths.statePath);
@@ -1043,20 +1484,30 @@ export async function getChannelAccessToken(
   const credentialStore =
     dependencies.credentialStore ??
     createDefaultCredentialStore(paths.credentialPath);
-  const token = await credentialStore.get(connection.credentialRef);
+  let token = await credentialStore.get(connection.credentialRef);
   if (token === undefined) {
     throw new OAuthServiceError(
       "找不到当前频道接入关联的受保护 OAuth 凭据，请重新授权。",
     );
   }
-  if (token.expiresAt !== undefined) {
-    const expiresAt = Date.parse(token.expiresAt);
-    if (
-      !Number.isNaN(expiresAt) &&
-      expiresAt <= (dependencies.now ?? (() => new Date()))().getTime()
-    ) {
-      throw new OAuthServiceError("OAuth 访问令牌已过期，请重新完成授权。");
-    }
+  const now = (dependencies.now ?? (() => new Date()))();
+  const expirationState = getTokenExpirationState(token, now);
+  if (expirationState === "invalid") {
+    throw new OAuthTokenRefreshError(
+      "OAuth 凭据包含无效的访问令牌过期时间，请重新完成授权。",
+      "invalid-response",
+      false,
+    );
+  }
+  if (expirationState === "expired") {
+    token = await refreshCredential({
+      credentialRef: connection.credentialRef,
+      credentialStore,
+      secretStore:
+        dependencies.secretStore ?? asProtectedSecretStore(credentialStore),
+      tokenRefreshProvider: dependencies.tokenRefreshProvider,
+      now,
+    });
   }
   return { channelId: connection.channelId, accessToken: token.accessToken };
 }
