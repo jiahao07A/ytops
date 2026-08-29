@@ -90,6 +90,20 @@ node .\dist\cli.js --json ops channel coverage --config .\ytops-config.json --ch
 node .\dist\cli.js download video "https://www.youtube.com/watch?v=VIDEO_ID_11" --quality 1080p --output-dir "D:\media\authorized" --rights-confirmed
 ```
 
+### 公开检索的 cookie opt-in（默认关闭）
+
+当公开搜索、inspect 或字幕语言查询被 YouTube 反机器人拦截（"Sign in to confirm you're not a bot"）时，可以显式提供 cookie 来源。五个公开命令（`search`、`inspect`、`captions list`、`captions fetch`、`download video/audio`）均支持：
+
+```powershell
+node .\dist\cli.js --json search "查询词" --cookies "D:\secrets\cookies.txt"
+node .\dist\cli.js --json search "查询词" --cookies-from-browser firefox
+```
+
+- 三层来源按优先级解析：命令行标志 > 环境变量 `YTOPS_YTDLP_COOKIES_FILE` / `YTOPS_YTDLP_COOKIES_FROM_BROWSER` > 配置 `global.cookies`（仅通过 `--config <path>` 显式读取）。cookie 文件与浏览器来源互斥，同时出现报 `USER_INPUT` 错误。
+- Windows 上 Chrome/Edge 127+ 启用 App-Bound Encryption，`--cookies-from-browser chrome/edge` 大概率失败；推荐导出的 Netscape 格式 cookie 文件或 `firefox`。cookie 文件需 Netscape 格式，CRLF 换行问题会导致 HTTP 400。
+- cookie 文件等于账号会话：使用专用小号、不要提交到 Git（`.gitignore` 已排除 `cookies*.txt`）、不要粘贴到聊天或日志。使用 cookie 仍有账号风控风险，官方建议优先考虑更换出口 IP。
+- cookie 文件内容不会进入配置、日志或 JSON 输出；配置只保存路径。`config set-global --config <path> --cookies-file <path>`（传空字符串清除）可持久化默认来源。决策记录见 [docs/adr/0001-opt-in-youtube-cookies.md](docs/adr/0001-opt-in-youtube-cookies.md)。
+
 本地处理不会修改原文件：
 
 ```powershell
@@ -114,18 +128,18 @@ npm run verify       # 格式、类型检查和测试的完整质量门禁
 
 可复用的 Codex skills 源码保存在 [skills/](skills/)，并与 CLI 一起接受版本管理和验证；在项目成熟前，它们**不会**安装到 `C:\Users\A2134\.codex\skills` 全局目录。
 
-| Skill                        | 用途                                                | 明确不做的事                        |
-| ---------------------------- | --------------------------------------------------- | ----------------------------------- |
-| `youtube-research`           | 搜索、检查公开元数据与字幕语言                      | 下载、Cookie、OAuth、频道写入       |
-| `youtube-authorized-media`   | 为明确获授权内容下载视频、音频或字幕                | 未确认权利的下载、读取浏览器 Cookie |
-| `youtube-local-media`        | 探测、抽音频、无损裁剪本地文件                      | 修改/删除源文件、任意 FFmpeg 参数   |
-| `youtube-channel-operations` | 校验本地配置、执行 OAuth 接入准备并生成运营预览计划 | 伪造上传、评论、隐私或元数据写入    |
+| Skill                        | 用途                                                | 明确不做的事                             |
+| ---------------------------- | --------------------------------------------------- | ---------------------------------------- |
+| `youtube-research`           | 搜索、检查公开元数据与字幕语言                      | 下载、未经确认的 Cookie、OAuth、频道写入 |
+| `youtube-authorized-media`   | 为明确获授权内容下载视频、音频或字幕                | 未确认权利的下载、未经确认的 Cookie 读取 |
+| `youtube-local-media`        | 探测、抽音频、无损裁剪本地文件                      | 修改/删除源文件、任意 FFmpeg 参数        |
+| `youtube-channel-operations` | 校验本地配置、执行 OAuth 接入准备并生成运营预览计划 | 伪造上传、评论、隐私或元数据写入         |
 
 每个 skill 都要求通过受控的 `node .\dist\cli.js --json` 子命令执行，并把下载、凭据和频道写操作视为独立的高风险边界。当前频道 skill 支持本地配置、只读 OAuth 频道接入、数据同步、Analytics/Reporting/评论查询和覆盖审计；频道写入仍属于禁止范围。
 
 ## 安全与合规边界
 
-- 默认强制 `yt-dlp --ignore-config` 和 `YTDLP_IGNORE_CONFIG=1`，不读取用户级配置，不默认读取浏览器 Cookie。
+- 默认强制 `yt-dlp --ignore-config` 和 `YTDLP_IGNORE_CONFIG=1`，不读取用户级配置；cookie 默认关闭，仅在显式 opt-in 时通过 `--cookies`、`--cookies-from-browser`、对应环境变量或 `global.cookies` 提供（见上文），两种来源互斥。
 - 所有外部进程以参数数组启动，不拼接 shell 命令。
 - 下载操作要求 `--rights-confirmed`；输出目录由调用者明确提供。
 - 频道上传、修改元数据、评论或隐私状态必须走官方 OAuth API，并在写入前展示频道、目标资源、影响范围与预览。当前版本不执行这些操作。

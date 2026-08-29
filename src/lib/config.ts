@@ -243,6 +243,56 @@ const dataDirectorySchema = nonEmptyTextSchema("本机数据目录").refine(
   },
 );
 
+const supportedCookieBrowsers = new Set([
+  "brave",
+  "chrome",
+  "chromium",
+  "edge",
+  "firefox",
+  "opera",
+  "safari",
+  "vivaldi",
+  "whale",
+]);
+
+export function isSupportedCookieBrowserSpec(value: string): boolean {
+  const trimmed = value.trim();
+  // 仅做词法白名单校验，keyring/profile/container 后缀原样透传给 yt-dlp；
+  // 外部命令以 argv 数组启动，spec 中的空格不构成注入风险。
+  if (controlCharacterPattern.test(trimmed)) {
+    return false;
+  }
+  const browserToken = trimmed.split(/[+:]/, 1)[0] ?? "";
+  return supportedCookieBrowsers.has(browserToken.toLowerCase());
+}
+
+const cookieFilePathSchema = nonEmptyTextSchema("cookie 文件路径").refine(
+  isStructuredDataDirectory,
+  {
+    message: "cookie 文件路径必须是明确的相对或绝对文件路径。",
+  },
+);
+
+const cookieBrowserSpecSchema = nonEmptyTextSchema("浏览器 cookie 来源").refine(
+  isSupportedCookieBrowserSpec,
+  {
+    message:
+      "浏览器 cookie 来源必须是 brave、chrome、chromium、edge、firefox、opera、safari、vivaldi 或 whale，可原样附加 yt-dlp 的 keyring、profile 或 container 后缀。",
+  },
+);
+
+const cookiesSettingsSchema = z
+  .object({
+    file: cookieFilePathSchema.optional(),
+    fromBrowser: cookieBrowserSpecSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (cookies) =>
+      !(cookies.file !== undefined && cookies.fromBrowser !== undefined),
+    { message: "cookie 文件与浏览器 cookie 只能配置其中一种来源。" },
+  );
+
 const channelIdSchema = nonEmptyTextSchema("频道 ID").refine(
   isValidYouTubeChannelId,
   {
@@ -380,6 +430,7 @@ export const channelOperationsConfigSchema = z
       .object({
         dataDirectory: dataDirectorySchema,
         sync: syncSettingsSchema,
+        cookies: cookiesSettingsSchema.optional(),
         rawEvidenceRetentionDays: integerSettingSchema(
           "原始证据保留天数",
           1,
@@ -399,6 +450,7 @@ export type ChannelOperationsConfig = z.infer<
 export interface GlobalConfigOverrides {
   dataDirectory?: string;
   sync?: Partial<ChannelOperationsConfig["global"]["sync"]>;
+  cookies?: ChannelOperationsConfig["global"]["cookies"] | null;
   rawEvidenceRetentionDays?: number;
 }
 
@@ -490,7 +542,7 @@ export function explainChannelOperationsConfig(): {
   return {
     global: {
       description:
-        "全局运行配置为所有频道提供默认的数据目录、同步节奏和原始证据保留策略。",
+        "全局运行配置为所有频道提供默认的数据目录、同步节奏、原始证据保留策略，以及可选的公开检索 cookie 来源（默认关闭）。",
       options: [
         {
           name: "global.dataDirectory",
@@ -526,6 +578,22 @@ export function explainChannelOperationsConfig(): {
           rule: "必须是 1 到 3650 之间的整数，默认值为 365。",
           temporaryCommand: `${validateConfig} --initial-backfill-days <days>`,
           persistentCommand: `${setGlobalConfig} --initial-backfill-days <days>`,
+        },
+        {
+          name: "global.cookies.file",
+          description:
+            "显式提供给公开检索命令的 Netscape cookie 文件路径；默认不设置。",
+          rule: "必须是明确的相对或绝对文件路径（相对路径按 CLI 进程工作目录解析，命令行 --cookies 也接受裸文件名）；不能与 global.cookies.fromBrowser 同时设置；cookie 文件内容不属于配置。",
+          temporaryCommand: `${validateConfig} --cookies-file <path>`,
+          persistentCommand: `${setGlobalConfig} --cookies-file <path>`,
+        },
+        {
+          name: "global.cookies.fromBrowser",
+          description:
+            "显式要求 yt-dlp 从指定浏览器读取 cookie；Windows 上 Chrome/Edge 受 App-Bound Encryption 限制，推荐 firefox。",
+          rule: "浏览器必须是 brave、chrome、chromium、edge、firefox、opera、safari、vivaldi 或 whale，可原样附加 yt-dlp 的 keyring、profile 或 container 后缀；不能与 global.cookies.file 同时设置。",
+          temporaryCommand: `${validateConfig} --cookies-from-browser <spec>`,
+          persistentCommand: `${setGlobalConfig} --cookies-from-browser <spec>`,
         },
         {
           name: "global.rawEvidenceRetentionDays",
@@ -633,7 +701,7 @@ export function explainChannelOperationsConfig(): {
       ],
     },
     credentialPolicy:
-      "OAuth 凭据只应由操作系统受保护凭据存储管理，不属于配置文件、日志或 CLI JSON 输出。",
+      "OAuth 凭据只应由操作系统受保护凭据存储管理，不属于配置文件、日志或 CLI JSON 输出。cookie 文件内容同样绝不写入配置、日志或 CLI JSON 输出；配置最多保存其本机路径。",
   };
 }
 
@@ -739,6 +807,9 @@ export function applyGlobalConfigOverrides(
         ...config.global.sync,
         ...overrides.sync,
       },
+      ...(overrides.cookies === undefined
+        ? {}
+        : { cookies: overrides.cookies ?? undefined }),
       rawEvidenceRetentionDays:
         overrides.rawEvidenceRetentionDays ??
         config.global.rawEvidenceRetentionDays,
@@ -853,6 +924,7 @@ function hasGlobalOverrides(overrides: GlobalConfigOverrides): boolean {
   return (
     overrides.dataDirectory !== undefined ||
     overrides.rawEvidenceRetentionDays !== undefined ||
+    overrides.cookies !== undefined ||
     Object.keys(overrides.sync ?? {}).length > 0
   );
 }

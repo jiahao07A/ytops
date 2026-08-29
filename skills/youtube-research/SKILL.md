@@ -17,7 +17,7 @@ Run only these read-only commands:
 - `rtk node .\dist\cli.js --json inspect <url>`
 - `rtk node .\dist\cli.js --json captions list <url>`
 
-Invoke them through PowerShell and `rtk`; keep `--json` before the subcommand. Do not use `Invoke-Expression`, shell interpolation, browser cookies, OAuth credentials, or arbitrary `yt-dlp` arguments.
+Invoke them through PowerShell and `rtk`; keep `--json` before the subcommand. Do not use `Invoke-Expression`, shell interpolation, OAuth credentials, or arbitrary `yt-dlp` arguments. Cookie opt-in (`--cookies <file>` / `--cookies-from-browser <spec>`) is allowed only when the user explicitly provides the source and public retrieval is blocked by bot detection; never read or print cookie file contents.
 
 ## Workflow
 
@@ -32,4 +32,4 @@ Invoke them through PowerShell and `rtk`; keep `--json` before the subcommand. D
 - Do not download video, audio, captions, thumbnails, comments, or playlists.
 - Do not use this skill as a substitute for the official YouTube Data API when the user needs channel-owned or private information.
 - Do not assume a search result grants reuse rights. Hand off to `$youtube-authorized-media` only after the user explicitly confirms ownership or authorization.
-- Report tool failures directly. Do not bypass `ytops` safety defaults or retry with browser cookies.
+- Report tool failures directly. Do not bypass `ytops` safety defaults; retry with cookies only after the user explicitly opts in and provides the source (prefer an exported Netscape cookie file or `firefox`; Chrome/Edge on Windows are limited by App-Bound Encryption).

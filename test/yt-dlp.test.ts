@@ -3,6 +3,7 @@ import { UserInputError } from "../src/lib/errors.js";
 import type { CommandResult } from "../src/lib/process.js";
 import {
   buildDownloadArguments,
+  cookieArguments,
   ExternalToolError,
   inspectVideo,
   listCaptionLanguages,
@@ -10,6 +11,85 @@ import {
   searchVideos,
   summarizeVideo,
 } from "../src/lib/yt-dlp.js";
+
+describe("cookie argument construction", () => {
+  it("appends the cookie file after the safe default arguments", () => {
+    const args = buildDownloadArguments(
+      "video",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "D:\\authorized-output",
+      "best",
+      { file: "D:\\secrets\\cookies.txt" },
+    );
+
+    expect(args.slice(0, 3)).toEqual([
+      "--ignore-config",
+      "--no-warnings",
+      "--no-playlist",
+    ]);
+    expect(args).toContain("--cookies");
+    expect(args[args.indexOf("--cookies") + 1]).toBe(
+      "D:\\secrets\\cookies.txt",
+    );
+  });
+
+  it("passes the browser cookie spec through verbatim", () => {
+    expect(cookieArguments({ fromBrowser: "firefox:dev-edition" })).toEqual([
+      "--cookies-from-browser",
+      "firefox:dev-edition",
+    ]);
+    expect(cookieArguments(undefined)).toEqual([]);
+    expect(cookieArguments({})).toEqual([]);
+  });
+
+  it("rejects providing both cookie sources at the wrapper boundary", () => {
+    expect(() =>
+      cookieArguments({ file: "a.txt", fromBrowser: "firefox" }),
+    ).toThrow(UserInputError);
+    expect(() =>
+      buildDownloadArguments(
+        "audio",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "D:\\output",
+        "best",
+        { file: "a.txt", fromBrowser: "firefox" },
+      ),
+    ).toThrow(UserInputError);
+  });
+
+  it("keeps the ignore-config boundary while cookies are enabled", async () => {
+    const seenArguments: string[][] = [];
+    const runner = async (
+      command: string,
+      args: string[],
+    ): Promise<CommandResult> => {
+      seenArguments.push(args);
+      return {
+        command,
+        args,
+        exitCode: 0,
+        stdout: JSON.stringify({
+          entries: [
+            {
+              id: "dQw4w9WgXcQ",
+              title: "Example",
+              webpage_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            },
+          ],
+        }),
+        stderr: "",
+      };
+    };
+
+    await searchVideos("test query", 1, {
+      runner,
+      cookies: { file: "cookies.txt" },
+    });
+
+    expect(seenArguments[0]).toContain("--ignore-config");
+    expect(seenArguments[0]).toContain("--cookies");
+  });
+});
 
 describe("yt-dlp command construction", () => {
   it("forces the safe configuration boundary for video downloads", () => {

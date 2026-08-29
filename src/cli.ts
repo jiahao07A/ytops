@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { stat } from "node:fs/promises";
 import { Command, CommanderError } from "commander";
 import { z } from "zod";
 import {
@@ -10,6 +11,7 @@ import {
   assertSafeFreeformConfigurationKey,
   explainChannelOperationsConfig,
   initializeChannelOperationsConfig,
+  isSupportedCookieBrowserSpec,
   redactConfigurationPathForOutput,
   updateAnalysisProfileOperationsConfig,
   updateChannelOperationsConfig,
@@ -36,6 +38,7 @@ import {
 import { ExternalToolError } from "./lib/process.js";
 import { clipMedia, extractAudio, probeMedia } from "./lib/media.js";
 import {
+  type CookieSettings,
   downloadMedia,
   fetchCaptions,
   inspectVideo,
@@ -176,6 +179,8 @@ interface GlobalConfigOverrideOptions {
   maxConcurrency?: string;
   quotaBudget?: string;
   initialBackfillDays?: string;
+  cookiesFile?: string;
+  cookiesFromBrowser?: string;
   rawEvidenceRetentionDays?: string;
 }
 
@@ -203,9 +208,47 @@ type ConfigCommandOptions = GlobalConfigOverrideOptions &
     config: string;
   };
 
+function parseGlobalCookieOverrides(
+  options: GlobalConfigOverrideOptions,
+): GlobalConfigOverrides["cookies"] {
+  if (
+    options.cookiesFile === undefined &&
+    options.cookiesFromBrowser === undefined
+  ) {
+    return undefined;
+  }
+  if (
+    options.cookiesFile !== undefined &&
+    options.cookiesFromBrowser !== undefined
+  ) {
+    throw new UserInputError(
+      "--cookies-file 与 --cookies-from-browser 只能提供其中一个。",
+    );
+  }
+
+  const cookiesFile = options.cookiesFile?.trim();
+  if (cookiesFile !== undefined) {
+    if (cookiesFile.length === 0) {
+      return null;
+    }
+    return { file: cookiesFile };
+  }
+
+  const cookiesFromBrowser = options.cookiesFromBrowser?.trim();
+  if (cookiesFromBrowser !== undefined) {
+    if (cookiesFromBrowser.length === 0) {
+      return null;
+    }
+    return { fromBrowser: cookiesFromBrowser };
+  }
+
+  return undefined;
+}
+
 function parseGlobalConfigOverrides(
   options: GlobalConfigOverrideOptions,
 ): GlobalConfigOverrides {
+  const cookieOverrides = parseGlobalCookieOverrides(options);
   return {
     dataDirectory: options.dataDirectory,
     sync: {
@@ -260,6 +303,7 @@ function parseGlobalConfigOverrides(
             3_650,
           ),
         }),
+    ...(cookieOverrides === undefined ? {} : { cookies: cookieOverrides }),
   };
 }
 
@@ -272,6 +316,126 @@ function parseBoolean(value: string, name: string): boolean {
     return false;
   }
   throw new UserInputError(`${name} 必须是 true 或 false。`);
+}
+
+interface PublicCookieOptions {
+  cookies?: string;
+  cookiesFromBrowser?: string;
+  config?: string;
+}
+
+function addPublicRetrievalOptions(command: Command): Command {
+  return command
+    .option(
+      "--cookies <file>",
+      "显式提供 Netscape cookie 文件；与 --cookies-from-browser 互斥",
+    )
+    .option(
+      "--cookies-from-browser <spec>",
+      "让 yt-dlp 从指定浏览器读取 cookie；Windows 上 Chrome/Edge 受 App-Bound Encryption 限制，推荐 firefox",
+    )
+    .option(
+      "-c, --config <path>",
+      "读取运营配置 global.cookies 作为默认 cookie 来源",
+    );
+}
+
+function assertSupportedCookieBrowserOption(spec: string): void {
+  if (!isSupportedCookieBrowserSpec(spec)) {
+    throw new UserInputError(
+      "--cookies-from-browser 只支持 brave、chrome、chromium、edge、firefox、opera、safari、vivaldi、whale，可原样附加 yt-dlp 的 keyring、profile 或 container 后缀。",
+    );
+  }
+}
+
+async function assertCookieFileAvailable(path: string): Promise<void> {
+  let fileStats;
+  try {
+    fileStats = await stat(path);
+  } catch {
+    throw new UserInputError(`cookie 文件不存在或无法访问：${path}`);
+  }
+  if (!fileStats.isFile()) {
+    throw new UserInputError(`cookie 文件路径必须指向文件而不是目录：${path}`);
+  }
+}
+
+async function resolvePublicCookieSettings(
+  options: PublicCookieOptions,
+): Promise<CookieSettings | undefined> {
+  if (
+    options.cookies !== undefined &&
+    options.cookiesFromBrowser !== undefined
+  ) {
+    throw new UserInputError(
+      "--cookies 与 --cookies-from-browser 只能提供其中一个。",
+    );
+  }
+
+  if (options.cookies !== undefined && options.cookies.trim().length === 0) {
+    throw new UserInputError("--cookies 不能为空。");
+  }
+  if (
+    options.cookiesFromBrowser !== undefined &&
+    options.cookiesFromBrowser.trim().length === 0
+  ) {
+    throw new UserInputError("--cookies-from-browser 不能为空。");
+  }
+
+  let file = options.cookies?.trim();
+  let fromBrowser = options.cookiesFromBrowser?.trim();
+  let fileSource =
+    options.cookies !== undefined ? "命令行 --cookies" : undefined;
+  let browserSource =
+    options.cookiesFromBrowser !== undefined
+      ? "命令行 --cookies-from-browser"
+      : undefined;
+
+  const environmentFile = process.env.YTOPS_YTDLP_COOKIES_FILE?.trim();
+  if (file === undefined && environmentFile) {
+    file = environmentFile;
+    fileSource = "环境变量 YTOPS_YTDLP_COOKIES_FILE";
+  }
+  const environmentBrowser =
+    process.env.YTOPS_YTDLP_COOKIES_FROM_BROWSER?.trim();
+  if (fromBrowser === undefined && environmentBrowser) {
+    fromBrowser = environmentBrowser;
+    browserSource = "环境变量 YTOPS_YTDLP_COOKIES_FROM_BROWSER";
+  }
+
+  if (
+    options.config !== undefined &&
+    (file === undefined || fromBrowser === undefined)
+  ) {
+    const { config } = await validateChannelOperationsConfig(options.config);
+    const configuredCookies = config.global.cookies;
+    if (file === undefined && configuredCookies?.file !== undefined) {
+      file = configuredCookies.file;
+      fileSource = "配置文件 global.cookies.file";
+    }
+    if (
+      fromBrowser === undefined &&
+      configuredCookies?.fromBrowser !== undefined
+    ) {
+      fromBrowser = configuredCookies.fromBrowser;
+      browserSource = "配置文件 global.cookies.fromBrowser";
+    }
+  }
+
+  if (file !== undefined && fromBrowser !== undefined) {
+    throw new UserInputError(
+      `${fileSource}与${browserSource}同时提供；一次只能使用一种 cookie 来源。`,
+    );
+  }
+  if (file !== undefined) {
+    await assertCookieFileAvailable(file);
+    return { file };
+  }
+  if (fromBrowser !== undefined) {
+    assertSupportedCookieBrowserOption(fromBrowser);
+    return { fromBrowser };
+  }
+  return undefined;
 }
 
 function parseCommaSeparatedList(value: string, name: string): string[] {
@@ -623,6 +787,14 @@ function addGlobalConfigOverrideOptions(command: Command): Command {
     .option("--max-concurrency <count>", "更新同步最大并发数")
     .option("--quota-budget <units>", "更新同步配额预算")
     .option("--initial-backfill-days <days>", "更新首次回填天数")
+    .option(
+      "--cookies-file <path>",
+      "更新公开检索 cookie 文件路径；传空字符串清除",
+    )
+    .option(
+      "--cookies-from-browser <spec>",
+      "更新浏览器 cookie 来源；传空字符串清除",
+    )
     .option("--raw-evidence-retention-days <days>", "更新原始证据保留天数");
 }
 
@@ -755,111 +927,135 @@ validateConfig.action(async (options: ConfigCommandOptions) =>
   ),
 );
 
-program
-  .command("search")
-  .description("搜索公开 YouTube 视频并返回精简元数据")
-  .argument("<query>", "搜索词")
-  .option("-n, --limit <count>", "结果数量，1-50", "10")
-  .action(async (query: string, options: { limit: string }) =>
+addPublicRetrievalOptions(
+  program
+    .command("search")
+    .description("搜索公开 YouTube 视频并返回精简元数据")
+    .argument("<query>", "搜索词")
+    .option("-n, --limit <count>", "结果数量，1-50", "10"),
+).action(
+  async (query: string, options: { limit: string } & PublicCookieOptions) =>
     execute("搜索结果", async () => ({
       query,
       videos: await searchVideos(
         query,
         parseInteger(options.limit, "--limit", 1, 50),
+        { cookies: await resolvePublicCookieSettings(options) },
       ),
     })),
-  );
+);
 
-program
-  .command("inspect")
-  .description("读取单个公开视频的元数据，不下载媒体")
-  .argument("<url>", "视频 URL")
-  .action(async (url: string) =>
-    execute("视频元数据", () => inspectVideo(url)),
-  );
+addPublicRetrievalOptions(
+  program
+    .command("inspect")
+    .description("读取单个公开视频的元数据，不下载媒体")
+    .argument("<url>", "视频 URL"),
+).action(async (url: string, options: PublicCookieOptions) =>
+  execute("视频元数据", async () =>
+    inspectVideo(url, {
+      cookies: await resolvePublicCookieSettings(options),
+    }),
+  ),
+);
 
 const captions = program.command("captions").description("检查或取得字幕工件");
 
-captions
-  .command("list")
-  .description("列出公开视频可用的人工和自动字幕语言")
-  .argument("<url>", "视频 URL")
-  .action(async (url: string) =>
-    execute("字幕语言", () => listCaptionLanguages(url)),
-  );
+addPublicRetrievalOptions(
+  captions
+    .command("list")
+    .description("列出公开视频可用的人工和自动字幕语言")
+    .argument("<url>", "视频 URL"),
+).action(async (url: string, options: PublicCookieOptions) =>
+  execute("字幕语言", async () =>
+    listCaptionLanguages(url, {
+      cookies: await resolvePublicCookieSettings(options),
+    }),
+  ),
+);
 
-captions
-  .command("fetch")
-  .description("将已获授权内容的指定语言字幕写入明确的输出目录")
-  .argument("<url>", "视频 URL")
-  .requiredOption(
-    "-l, --language <language>",
-    "字幕语言，例如 zh-Hans、zh-Hant 或 en",
-  )
-  .requiredOption("-o, --output-dir <path>", "输出目录")
-  .option("--rights-confirmed", "确认你拥有该内容的使用或下载权利")
-  .action(
-    async (
-      url: string,
-      options: {
-        language: string;
-        outputDir: string;
-        rightsConfirmed?: boolean;
-      },
-    ) =>
-      execute("字幕工件", async () => {
-        requireRightsConfirmation(Boolean(options.rightsConfirmed));
-        return fetchCaptions(url, options.language, options.outputDir);
-      }),
-  );
+addPublicRetrievalOptions(
+  captions
+    .command("fetch")
+    .description("将已获授权内容的指定语言字幕写入明确的输出目录")
+    .argument("<url>", "视频 URL")
+    .requiredOption(
+      "-l, --language <language>",
+      "字幕语言，例如 zh-Hans、zh-Hant 或 en",
+    )
+    .requiredOption("-o, --output-dir <path>", "输出目录")
+    .option("--rights-confirmed", "确认你拥有该内容的使用或下载权利"),
+).action(
+  async (
+    url: string,
+    options: {
+      language: string;
+      outputDir: string;
+      rightsConfirmed?: boolean;
+    } & PublicCookieOptions,
+  ) =>
+    execute("字幕工件", async () => {
+      requireRightsConfirmation(Boolean(options.rightsConfirmed));
+      return fetchCaptions(url, options.language, options.outputDir, {
+        cookies: await resolvePublicCookieSettings(options),
+      });
+    }),
+);
 
 const download = program
   .command("download")
   .description("下载获授权的媒体到明确的输出目录");
 
-download
-  .command("video")
-  .description("下载视频；必须显式确认已拥有权利或授权")
-  .argument("<url>", "视频 URL")
-  .requiredOption("-o, --output-dir <path>", "输出目录")
-  .option("-q, --quality <quality>", "best、720p、1080p 等", "best")
-  .option("--rights-confirmed", "确认你拥有该内容的使用或下载权利")
-  .action(
-    async (
-      url: string,
-      options: {
-        outputDir: string;
-        quality: string;
-        rightsConfirmed?: boolean;
-      },
-    ) =>
-      execute("下载结果", async () => {
-        requireRightsConfirmation(Boolean(options.rightsConfirmed));
-        return downloadMedia(
-          "video",
-          url,
-          options.outputDir,
-          normalizeQuality(options.quality),
-        );
-      }),
-  );
+addPublicRetrievalOptions(
+  download
+    .command("video")
+    .description("下载视频；必须显式确认已拥有权利或授权")
+    .argument("<url>", "视频 URL")
+    .requiredOption("-o, --output-dir <path>", "输出目录")
+    .option("-q, --quality <quality>", "best、720p、1080p 等", "best")
+    .option("--rights-confirmed", "确认你拥有该内容的使用或下载权利"),
+).action(
+  async (
+    url: string,
+    options: {
+      outputDir: string;
+      quality: string;
+      rightsConfirmed?: boolean;
+    } & PublicCookieOptions,
+  ) =>
+    execute("下载结果", async () => {
+      requireRightsConfirmation(Boolean(options.rightsConfirmed));
+      return downloadMedia(
+        "video",
+        url,
+        options.outputDir,
+        normalizeQuality(options.quality),
+        { cookies: await resolvePublicCookieSettings(options) },
+      );
+    }),
+);
 
-download
-  .command("audio")
-  .description("下载音频；必须显式确认已拥有权利或授权")
-  .argument("<url>", "视频 URL")
-  .requiredOption("-o, --output-dir <path>", "输出目录")
-  .option("--rights-confirmed", "确认你拥有该内容的使用或下载权利")
-  .action(
-    async (
-      url: string,
-      options: { outputDir: string; rightsConfirmed?: boolean },
-    ) =>
-      execute("下载结果", async () => {
-        requireRightsConfirmation(Boolean(options.rightsConfirmed));
-        return downloadMedia("audio", url, options.outputDir, "best");
-      }),
-  );
+addPublicRetrievalOptions(
+  download
+    .command("audio")
+    .description("下载音频；必须显式确认已拥有权利或授权")
+    .argument("<url>", "视频 URL")
+    .requiredOption("-o, --output-dir <path>", "输出目录")
+    .option("--rights-confirmed", "确认你拥有该内容的使用或下载权利"),
+).action(
+  async (
+    url: string,
+    options: {
+      outputDir: string;
+      rightsConfirmed?: boolean;
+    } & PublicCookieOptions,
+  ) =>
+    execute("下载结果", async () => {
+      requireRightsConfirmation(Boolean(options.rightsConfirmed));
+      return downloadMedia("audio", url, options.outputDir, "best", {
+        cookies: await resolvePublicCookieSettings(options),
+      });
+    }),
+);
 
 const processCommand = program
   .command("process")
@@ -1470,8 +1666,14 @@ operations
       youtubeDataClientSecretConfigured: Boolean(
         process.env.YTOPS_GOOGLE_CLIENT_SECRET,
       ),
+      cookiesFileConfigured: Boolean(
+        process.env.YTOPS_YTDLP_COOKIES_FILE?.trim(),
+      ),
+      cookiesFromBrowserConfigured: Boolean(
+        process.env.YTOPS_YTDLP_COOKIES_FROM_BROWSER?.trim(),
+      ),
       guidance:
-        "频道读取、Analytics、上传和更新必须走官方 YouTube API/OAuth，并在每个写操作前提供目标与预览确认。",
+        "频道读取、Analytics、上传和更新必须走官方 YouTube API/OAuth，并在每个写操作前提供目标与预览确认。公开检索 cookie 默认不读取；显式 opt-in 时建议使用导出的 cookie 文件或 firefox（Windows 上 Chrome/Edge 受 App-Bound Encryption 限制），并使用专用小号以降低账号风控风险。",
       ...(await runDoctor()),
     })),
   );

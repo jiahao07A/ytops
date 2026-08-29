@@ -124,3 +124,53 @@ describe("external tool diagnostics", () => {
     expect(ytDlpCall?.env?.YTDLP_IGNORE_CONFIG).toBe("1");
   });
 });
+
+describe("cookie access defaults", () => {
+  const healthyRunner = async (
+    command: string,
+    args: string[],
+  ): Promise<CommandResult> => ({
+    command,
+    args,
+    exitCode: 0,
+    stdout: `${command} 1.0.0`,
+    stderr: "",
+  });
+
+  it("keeps cookie access disabled when no cookie source is configured", async () => {
+    const originalFile = process.env.YTOPS_YTDLP_COOKIES_FILE;
+    const originalBrowser = process.env.YTOPS_YTDLP_COOKIES_FROM_BROWSER;
+    delete process.env.YTOPS_YTDLP_COOKIES_FILE;
+    delete process.env.YTOPS_YTDLP_COOKIES_FROM_BROWSER;
+
+    try {
+      const report = await runDoctor({ runner: healthyRunner });
+      expect(report.safeDefaults.cookieAccess).toBe("disabled");
+    } finally {
+      if (originalFile !== undefined) {
+        process.env.YTOPS_YTDLP_COOKIES_FILE = originalFile;
+      }
+      if (originalBrowser !== undefined) {
+        process.env.YTOPS_YTDLP_COOKIES_FROM_BROWSER = originalBrowser;
+      }
+    }
+  });
+
+  it("reports environment opt-in without exposing the cookie path", async () => {
+    const cookiePath = "D:/private/ytops-cookies.txt";
+    const originalFile = process.env.YTOPS_YTDLP_COOKIES_FILE;
+    process.env.YTOPS_YTDLP_COOKIES_FILE = cookiePath;
+
+    try {
+      const report = await runDoctor({ runner: healthyRunner });
+      expect(report.safeDefaults.cookieAccess).toBe("environment-opt-in");
+      expect(JSON.stringify(report)).not.toContain(cookiePath);
+    } finally {
+      if (originalFile !== undefined) {
+        process.env.YTOPS_YTDLP_COOKIES_FILE = originalFile;
+      } else {
+        delete process.env.YTOPS_YTDLP_COOKIES_FILE;
+      }
+    }
+  });
+});

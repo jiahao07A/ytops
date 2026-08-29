@@ -220,3 +220,140 @@ describe("配置持久化", () => {
     }
   });
 });
+
+describe("公开检索 cookie 配置", () => {
+  it("持久化 cookie 文件路径并可整体清除", async () => {
+    const configPath = resolve(tmpdir(), `ytops-config-${randomUUID()}.json`);
+
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      await updateGlobalChannelOperationsConfig(configPath, {
+        cookies: { file: "secrets/youtube-cookies.txt" },
+      });
+      expect(JSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({
+        global: { cookies: { file: "secrets/youtube-cookies.txt" } },
+      });
+
+      await updateGlobalChannelOperationsConfig(configPath, {
+        cookies: null,
+      });
+      const cleared = JSON.parse(readFileSync(configPath, "utf8"));
+      expect(cleared.global.cookies).toBeUndefined();
+    } finally {
+      if (existsSync(configPath)) {
+        unlinkSync(configPath);
+      }
+    }
+  });
+
+  it("持久化浏览器 cookie 来源", async () => {
+    const configPath = resolve(tmpdir(), `ytops-config-${randomUUID()}.json`);
+
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      await updateGlobalChannelOperationsConfig(configPath, {
+        cookies: { fromBrowser: "firefox:dev-edition" },
+      });
+      expect(JSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({
+        global: { cookies: { fromBrowser: "firefox:dev-edition" } },
+      });
+    } finally {
+      if (existsSync(configPath)) {
+        unlinkSync(configPath);
+      }
+    }
+  });
+
+  it("拒绝同时设置两种 cookie 来源，并保留原配置", async () => {
+    const configPath = resolve(tmpdir(), `ytops-config-${randomUUID()}.json`);
+
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const savedConfig = readFileSync(configPath, "utf8");
+      const error = await updateGlobalChannelOperationsConfig(configPath, {
+        cookies: { file: "a/cookies.txt", fromBrowser: "firefox" },
+      }).catch((reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("只能配置其中一种来源");
+      expect(readFileSync(configPath, "utf8")).toBe(savedConfig);
+    } finally {
+      if (existsSync(configPath)) {
+        unlinkSync(configPath);
+      }
+    }
+  });
+
+  it("拒绝凭据形状或非结构化的 cookie 文件路径", async () => {
+    const configPath = resolve(tmpdir(), `ytops-config-${randomUUID()}.json`);
+
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const savedConfig = readFileSync(configPath, "utf8");
+
+      for (const cookies of [
+        { file: "GOCSPX-do-not-store-cookie-path" },
+        { file: "https://example.com/cookies.txt" },
+        { file: "cookies.txt\n more" },
+      ]) {
+        const error = await updateGlobalChannelOperationsConfig(configPath, {
+          cookies,
+        }).catch((reason: unknown) => reason);
+        expect(error).toBeInstanceOf(Error);
+      }
+
+      expect(readFileSync(configPath, "utf8")).toBe(savedConfig);
+    } finally {
+      if (existsSync(configPath)) {
+        unlinkSync(configPath);
+      }
+    }
+  });
+
+  it("拒绝不支持或凭据形状的浏览器来源", async () => {
+    const configPath = resolve(tmpdir(), `ytops-config-${randomUUID()}.json`);
+
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const savedConfig = readFileSync(configPath, "utf8");
+
+      for (const cookies of [
+        { fromBrowser: "safari18" },
+        { fromBrowser: "access_token=abc firefox" },
+      ]) {
+        const error = await updateGlobalChannelOperationsConfig(configPath, {
+          cookies,
+        }).catch((reason: unknown) => reason);
+        expect(error).toBeInstanceOf(Error);
+      }
+
+      expect(readFileSync(configPath, "utf8")).toBe(savedConfig);
+    } finally {
+      if (existsSync(configPath)) {
+        unlinkSync(configPath);
+      }
+    }
+  });
+
+  it("拒绝 cookie 设置中的未声明字段", async () => {
+    const configPath = resolve(tmpdir(), `ytops-config-${randomUUID()}.json`);
+
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const savedConfig = readFileSync(configPath, "utf8");
+      const error = await updateGlobalChannelOperationsConfig(configPath, {
+        cookies: {
+          file: "a/cookies.txt",
+          value: "do-not-store-cookie-content",
+        } as unknown as { file: string },
+      }).catch((reason: unknown) => reason);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(readFileSync(configPath, "utf8")).toBe(savedConfig);
+    } finally {
+      if (existsSync(configPath)) {
+        unlinkSync(configPath);
+      }
+    }
+  });
+});

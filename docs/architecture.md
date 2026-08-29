@@ -54,11 +54,13 @@ The media-acquisition side and official channel-operations side are separate pro
 
 ```text
 public / authorized media workflow
-  -> yt-dlp, no default cookies, explicit right confirmation
+  -> yt-dlp, cookies only by explicit opt-in (flags > env > global.cookies, mutually exclusive sources), explicit right confirmation
 
 official channel workflow
   -> user OAuth, least scopes, preview + explicit write confirmation
 ```
+
+Cookie access is disabled by default (ADR 0001). It is enabled only through explicit opt-in sources, and cookie file contents never enter configs, logs, or JSON output; the config stores at most the local file path. Official channel operations never use browser cookies or `yt-dlp` as an impersonation mechanism.
 
 Do not present `yt-dlp` as an official YouTube API client. The YouTube API developer policies restrict scraping and downloading/caching audiovisual content through an API client. Official channel mutation must use official OAuth APIs; it must not use browser cookies or `yt-dlp` as an impersonation mechanism.
 

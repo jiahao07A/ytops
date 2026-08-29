@@ -254,6 +254,7 @@ def redact_command_args(args: Sequence[str]) -> str:
         "--client-secret",
         "--access-token",
         "--refresh-token",
+        "--cookies",
     }
     path_options = {
         "--config",

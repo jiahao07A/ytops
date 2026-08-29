@@ -42,8 +42,14 @@ export interface VideoSummary {
   thumbnail: string | null;
 }
 
+export interface CookieSettings {
+  file?: string;
+  fromBrowser?: string;
+}
+
 export interface YtDlpOptions {
   runner?: CommandRunner;
+  cookies?: CookieSettings;
 }
 
 function safeYtDlpEnvironment(): NodeJS.ProcessEnv {
@@ -51,6 +57,24 @@ function safeYtDlpEnvironment(): NodeJS.ProcessEnv {
     ...process.env,
     YTDLP_IGNORE_CONFIG: "1",
   };
+}
+
+export function cookieArguments(cookies: CookieSettings | undefined): string[] {
+  if (cookies === undefined) {
+    return [];
+  }
+  if (cookies.file !== undefined && cookies.fromBrowser !== undefined) {
+    throw new UserInputError(
+      "一次只能使用一种 cookie 来源：cookie 文件与浏览器 cookie 不能同时提供。",
+    );
+  }
+  if (cookies.file !== undefined) {
+    return ["--cookies", cookies.file];
+  }
+  if (cookies.fromBrowser !== undefined) {
+    return ["--cookies-from-browser", cookies.fromBrowser];
+  }
+  return [];
 }
 
 function isVideoId(value: string | null): value is string {
@@ -134,9 +158,9 @@ async function runYtDlp(args: string[], runner: CommandRunner = runCommand) {
 
 async function readJson(
   args: string[],
-  runner?: CommandRunner,
+  options: YtDlpOptions = {},
 ): Promise<Record<string, unknown>> {
-  const result = await runYtDlp(args, runner);
+  const result = await runYtDlp(args, options.runner);
   if (result.exitCode !== 0) {
     throw new ExternalToolError(
       result.command,
@@ -216,11 +240,12 @@ export async function searchVideos(
 
   const args = [
     ...SAFE_YTDLP_ARGUMENTS,
+    ...cookieArguments(options.cookies),
     "--skip-download",
     "--dump-single-json",
     `ytsearch${limit}:${query}`,
   ];
-  const raw = await readJson(args, options.runner);
+  const raw = await readJson(args, options);
   if (!Array.isArray(raw.entries)) {
     throw new ExternalToolError(
       "yt-dlp",
@@ -266,11 +291,12 @@ export async function inspectVideo(
   assertYouTubeUrl(url);
   const args = [
     ...SAFE_YTDLP_ARGUMENTS,
+    ...cookieArguments(options.cookies),
     "--skip-download",
     "--dump-single-json",
     url,
   ];
-  const raw = await readJson(args, options.runner);
+  const raw = await readJson(args, options);
   if (!hasVideoIdentity(raw)) {
     throw new ExternalToolError(
       "yt-dlp",
@@ -298,11 +324,12 @@ export async function listCaptionLanguages(
   assertYouTubeUrl(url);
   const args = [
     ...SAFE_YTDLP_ARGUMENTS,
+    ...cookieArguments(options.cookies),
     "--skip-download",
     "--dump-single-json",
     url,
   ];
-  const raw = await readJson(args, options.runner);
+  const raw = await readJson(args, options);
   if (
     typeof raw.subtitles !== "object" ||
     raw.subtitles === null ||
@@ -345,10 +372,12 @@ export function buildDownloadArguments(
   url: string,
   outputDirectory: string,
   quality: VideoQuality,
+  cookies?: CookieSettings,
 ): string[] {
   assertYouTubeUrl(url);
   const output = [
     ...SAFE_YTDLP_ARGUMENTS,
+    ...cookieArguments(cookies),
     "--paths",
     outputDirectory,
     "--print",
@@ -371,9 +400,17 @@ export async function downloadMedia(
   url: string,
   outputDirectory: string,
   quality: VideoQuality,
+  options: YtDlpOptions = {},
 ): Promise<{ outputDirectory: string; files: string[] }> {
   const result = await runYtDlp(
-    buildDownloadArguments(kind, url, outputDirectory, quality),
+    buildDownloadArguments(
+      kind,
+      url,
+      outputDirectory,
+      quality,
+      options.cookies,
+    ),
+    options.runner,
   );
   if (result.exitCode !== 0) {
     throw new ExternalCommandError(
@@ -397,29 +434,34 @@ export async function fetchCaptions(
   url: string,
   language: string,
   outputDirectory: string,
+  options: YtDlpOptions = {},
 ): Promise<{ outputDirectory: string; files: string[] }> {
   assertYouTubeUrl(url);
   if (language.trim().length === 0) {
     throw new UserInputError("字幕语言不能为空，例如 zh-Hans、zh-Hant 或 en。");
   }
 
-  const result = await runYtDlp([
-    ...SAFE_YTDLP_ARGUMENTS,
-    "--skip-download",
-    "--write-subs",
-    "--write-auto-subs",
-    "--sub-langs",
-    language,
-    "--sub-format",
-    "srt/vtt/best",
-    "--convert-subs",
-    "srt",
-    "--paths",
-    outputDirectory,
-    "--print",
-    "after_move:filepath",
-    url,
-  ]);
+  const result = await runYtDlp(
+    [
+      ...SAFE_YTDLP_ARGUMENTS,
+      ...cookieArguments(options.cookies),
+      "--skip-download",
+      "--write-subs",
+      "--write-auto-subs",
+      "--sub-langs",
+      language,
+      "--sub-format",
+      "srt/vtt/best",
+      "--convert-subs",
+      "srt",
+      "--paths",
+      outputDirectory,
+      "--print",
+      "after_move:filepath",
+      url,
+    ],
+    options.runner,
+  );
   if (result.exitCode !== 0) {
     throw new ExternalCommandError(
       result.command,

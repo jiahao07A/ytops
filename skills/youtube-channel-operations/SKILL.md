@@ -28,4 +28,4 @@ For configuration intent routing and confirmation rules, also read [references/c
 - Never perform or simulate a write operation that the CLI does not implement.
 - Never create, expose, commit, log, or copy OAuth client secrets, refresh tokens, browser Cookies, or resumable-upload session URLs.
 - Do not request broad scopes when a narrower scope is enough. Treat uploads, metadata changes, comments, and privacy changes as high-impact actions.
-- Keep the authorized media workflow separate from official OAuth operations to preserve the platform and compliance boundary.
+- Keep the authorized media workflow separate from official OAuth operations to preserve the platform and compliance boundary. Public-retrieval cookie opt-in (`--cookies` / `--cookies-from-browser`) belongs to the media acquisition path only; channel configuration and official API operations in this skill never use browser cookies or `yt-dlp` impersonation.

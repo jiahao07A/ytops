@@ -110,11 +110,15 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<{
     checkCommand("youtubeuploader", ["--version"], false, runner),
   ]);
 
+  const cookieSourceConfigured =
+    Boolean(process.env.YTOPS_YTDLP_COOKIES_FILE?.trim()) ||
+    Boolean(process.env.YTOPS_YTDLP_COOKIES_FROM_BROWSER?.trim());
+
   return {
     tools,
     safeDefaults: {
       YTDLP_IGNORE_CONFIG: "1",
-      cookieAccess: "disabled",
+      cookieAccess: cookieSourceConfigured ? "environment-opt-in" : "disabled",
       oauthWriteAccess: "not configured",
     },
   };
