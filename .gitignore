@@ -18,3 +18,5 @@ cookies*.txt
 cookie*.txt
 *-token.json
 *_token.json
+
+.npm-cache/

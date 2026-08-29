@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "global": {
+    "dataDirectory": ".ytops-data",
+    "sync": {
+      "frequencyHours": 24,
+      "maxConcurrency": 1,
+      "quotaBudget": 10000,
+      "initialBackfillDays": 365
+    },
+    "rawEvidenceRetentionDays": 365
+  },
+  "channels": [],
+  "analysisProfiles": {
+    "corePerformance": {
+      "metrics": [
+        "views",
+        "estimatedMinutesWatched",
+        "averageViewDuration",
+        "likes",
+        "comments",
+        "shares"
+      ],
+      "dimensions": [
+        "day"
+      ],
+      "dateRange": "last-28-days",
+      "filters": {}
+    }
+  }
+}
