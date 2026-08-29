@@ -961,7 +961,8 @@ async function existingConfigFileStats(
 function assertSingleConfigFileLink(
   fileStats: Awaited<ReturnType<typeof stat>> | undefined,
 ): void {
-  if (fileStats !== undefined && fileStats.nlink > 1) {
+  // POSIX 目录的 nlink 恒 >= 2（. 与 ..），只有常规文件才可能构成硬链接别名。
+  if (fileStats !== undefined && fileStats.isFile() && fileStats.nlink > 1) {
     throw new UserInputError(
       "配置文件不能通过硬链接共享。请使用单独的配置文件路径后再更新。",
     );
