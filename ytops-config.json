@@ -21,9 +21,7 @@
         "comments",
         "shares"
       ],
-      "dimensions": [
-        "day"
-      ],
+      "dimensions": ["day"],
       "dateRange": "last-28-days",
       "filters": {}
     }
