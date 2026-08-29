@@ -20,3 +20,5 @@ cookie*.txt
 *_token.json
 
 .npm-cache/
+
+.zcode/
