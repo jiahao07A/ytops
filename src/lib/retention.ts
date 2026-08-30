@@ -245,7 +245,7 @@ function classifyRetentionResponseError(
     httpErrorFactoriesFor(
       (message, kind, retryable) =>
         new RetentionServiceError(message, kind, retryable),
-      "Analytics",
+      "Analytics ",
       { quota: "quota", network: "network" },
       () =>
         new RetentionServiceError(

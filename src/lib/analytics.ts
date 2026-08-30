@@ -1092,7 +1092,7 @@ function classifyAnalyticsResponseError(
     httpErrorFactoriesFor(
       (message, kind, retryable) =>
         new AnalyticsServiceError(message, kind, retryable),
-      "Analytics",
+      "Analytics ",
       { quota: "quota", network: "network" },
       () =>
         new AnalyticsServiceError(
