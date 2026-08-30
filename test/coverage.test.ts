@@ -592,6 +592,46 @@ describe("覆盖矩阵与证据审计", () => {
     }
   });
 
+  it("reach 报表导入后覆盖矩阵呈现对应报表类型条目与数据截至时间", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-coverage-reach-"));
+    const configPath = join(root, "config.json");
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const reachEvidenceFile = await writeReportingSlot(root, {
+        reportType: "channel_reach_basic_a1",
+        jobId: "job-reach-1",
+        status: "imported",
+        rows: [
+          {
+            date: "2026-08-19",
+            channel_id: channelId,
+            video_id: "v1",
+            video_thumbnail_impressions: "100",
+            video_thumbnail_impressions_ctr: "0.0523",
+          },
+        ],
+      });
+
+      const matrix = await getCoverageMatrix(configPath, channelId);
+      const reportingEntries = matrix.entries.filter(
+        (entry) => entry.capability === "reporting.async",
+      );
+      expect(reportingEntries).toEqual([
+        expect.objectContaining({
+          capability: "reporting.async",
+          status: "supported",
+          scope: "报告类型 channel_reach_basic_a1",
+          reportStatus: "imported",
+          dataAsOf: "2026-08-19T00:00:00.000Z",
+          evidencePaths: [reachEvidenceFile],
+        }),
+      ]);
+      expect(JSON.stringify(matrix)).not.toContain("access-token");
+    } finally {
+      await cleanupFixture(root, configPath);
+    }
+  });
+
   it("尚未同步任何报告类型时，Reporting 条目保持不可用且无证据入口", async () => {
     const root = await mkdtemp(join(tmpdir(), "ytops-coverage-"));
     const configPath = join(root, "config.json");
