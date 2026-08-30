@@ -46,7 +46,7 @@ export interface CoverageMatrix {
  */
 function coverageAndRunToMatrixStatus(
   coverage: AnalyticsCoverageStatus,
-  runStatus: "not-started" | "running" | "partial" | "completed" | "failed",
+  runStatus: AnalyticsRunStatus,
 ): CoverageMatrixStatus {
   if (coverage === "permission-denied") {
     return "qualification-limited";
@@ -119,15 +119,10 @@ export async function getCoverageMatrix(
           : inventory.state.status === "failed"
             ? "unavailable"
             : "partial";
-  const analyticsStatus: CoverageMatrixStatus =
-    analytics.state.coverage === "permission-denied"
-      ? "qualification-limited"
-      : analytics.state.coverage === "complete" &&
-          analytics.state.status === "completed"
-        ? "supported"
-        : analytics.state.status === "completed"
-          ? "partial"
-          : "unavailable";
+  const analyticsStatus = coverageAndRunToMatrixStatus(
+    analytics.state.coverage,
+    analytics.state.status,
+  );
   const audienceStatus: CoverageMatrixStatus =
     analytics.state.audienceCoverage === "permission-denied"
       ? "qualification-limited"
@@ -165,16 +160,7 @@ export async function getCoverageMatrix(
       ),
     };
   });
-  const reportingMatrixEntries: Array<{
-    capability: string;
-    source: string;
-    status: CoverageMatrixStatus;
-    scope: string;
-    reportStatus?: string;
-    dataAsOf?: string;
-    reason?: string;
-    evidencePaths: string[];
-  }> =
+  const reportingMatrixEntries: CoverageMatrixEntry[] =
     reportingStatusEntries.length > 0
       ? reportingStatusEntries
       : [
