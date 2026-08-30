@@ -14,7 +14,6 @@ README 只维护已交付 CLI、安装、验证和安全摘要。架构与安全
 
 ## 当前能力
 
-<<<<<<< HEAD
 | 命令                                        | 作用                                                          | 外部工具                              |
 | ------------------------------------------- | ------------------------------------------------------------- | ------------------------------------- |
 | `doctor`                                    | 检查必需与可选工具，以及安全默认值                            | `yt-dlp`、FFmpeg 等                   |
@@ -32,7 +31,7 @@ README 只维护已交付 CLI、安装、验证和安全摘要。架构与安全
 | `ops channel analytics-read`                | 读取最后可用数据、刷新或强制最新                              | Analytics 新鲜度合同                  |
 | `ops channel analytics-breakdown`           | 按临时口径查询高维细分                                        | 受校验的 Analytics 配置               |
 | `ops channel retention-sync/status/read`    | 同步和读取单个视频的全历史留存曲线，支持断点续传              | 官方 YouTube Analytics API + 本机仓库 |
-| `ops channel reporting-sync/status`         | 请求、等待和导入异步 Reporting 报告，按报告类型分别保存与查询 | 官方 Reporting 适配层                 |
+| `ops channel reporting-sync/status/read`    | 请求、等待和导入异步 Reporting 报告，按报告类型分别保存、查询与读取 | 官方 Reporting 适配层                 |
 | `ops channel comments-sync/status`          | 只读同步评论并查询检查点                                      | 官方 YouTube Data API                 |
 | `ops channel coverage`                      | 输出覆盖矩阵、限制原因和证据入口                              | 本机仓库审计                          |
 | `config init/validate/explain`              | 初始化、校验和解释本地运营配置                                | 本地 JSON + 配置校验                  |

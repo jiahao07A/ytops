@@ -103,7 +103,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--report-type",
-        help="Reporting 官方 reportTypeId；full 且启用 Reporting 时必需",
+        help="Reporting 官方 reportTypeId；full 且启用 Reporting 时必需。"
+        "reach 报表探针请传 channel_reach_basic_a1（需真实凭据）",
     )
     parser.add_argument(
         "--redirect-uri",
@@ -163,7 +164,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-reporting",
         action="store_true",
-        help="full 套件中执行 Reporting；需要 --report-type",
+        help="full 套件中执行 Reporting 探针（需真实凭据）；需要 --report-type，"
+        "reach 报表传 channel_reach_basic_a1",
     )
     parser.add_argument(
         "--include-comments",
@@ -1057,10 +1059,25 @@ def run_full_suite(options: argparse.Namespace, checks: list[dict[str, Any]]) ->
             timeout_seconds=options.timeout_seconds,
         )
         append_check(checks, "channel.reporting-status", reporting_status)
+        # reach 报表探针：读取同一报告类型的规范化行（需真实凭据，离线测试不依赖）。
+        reporting_read = run_cli(
+            options.cli,
+            (
+                "ops",
+                "channel",
+                "reporting-read",
+                *channel_args,
+                "--report-type",
+                options.report_type,
+            ),
+            timeout_seconds=options.timeout_seconds,
+        )
+        append_check(checks, "channel.reporting-read", reporting_read)
     elif options.include_reporting:
         reason = "目标频道尚未建立可用的 OAuth 频道接入。"
         append_skipped(checks, "channel.reporting-sync", reason)
         append_skipped(checks, "channel.reporting-status", reason)
+        append_skipped(checks, "channel.reporting-read", reason)
 
     if options.include_comments and channel_ready:
         comments = run_cli(
