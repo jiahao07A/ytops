@@ -1046,7 +1046,14 @@ def run_full_suite(options: argparse.Namespace, checks: list[dict[str, Any]]) ->
         append_check(checks, "channel.reporting-sync", reporting)
         reporting_status = run_cli(
             options.cli,
-            ("ops", "channel", "reporting-status", *channel_args),
+            (
+                "ops",
+                "channel",
+                "reporting-status",
+                *channel_args,
+                "--report-type",
+                options.report_type,
+            ),
             timeout_seconds=options.timeout_seconds,
         )
         append_check(checks, "channel.reporting-status", reporting_status)

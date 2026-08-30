@@ -1,5 +1,14 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { dirname, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { validateChannelOperationsConfig } from "./config.js";
@@ -305,20 +314,158 @@ const dataSchema = z
   })
   .strict() as unknown as z.ZodType<ReportingData>;
 
-async function resolvePaths(
+/** 官方报告类型 ID（如 channel_basic_a2）只含这些字符，可直接作为目录名。 */
+const REPORT_TYPE_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 一次性迁移：把旧的单槽位布局（reporting/<频道>/latest-*）整体搬入
+ * 其报告类型目录。迁移后旧路径不再被任何读写触碰；新布局已初始化或
+ * 旧报告类型不安全时保持原样，绝不覆盖新布局数据。
+ */
+async function migrateLegacyReportingSlot(channelRoot: string): Promise<void> {
+  const legacyStatePath = resolve(channelRoot, "latest-state.json");
+  const legacyDataPath = resolve(channelRoot, "latest-data.json");
+  const legacyEvidencePath = resolve(channelRoot, "evidence");
+  const hasLegacyState = await pathExists(legacyStatePath);
+  const hasLegacyData = await pathExists(legacyDataPath);
+  if (!hasLegacyState && !hasLegacyData) return;
+
+  const keyedState = hasLegacyState
+    ? await loadLegacyJson(legacyStatePath, stateSchema)
+    : undefined;
+  const keyedData = hasLegacyState
+    ? undefined
+    : await loadLegacyJson(legacyDataPath, dataSchema);
+  const reportType = keyedState?.reportType ?? keyedData?.reportType;
+  if (reportType === undefined || !REPORT_TYPE_PATTERN.test(reportType)) {
+    return;
+  }
+  const targetRoot = resolve(channelRoot, reportType);
+  if (await pathExists(targetRoot)) return;
+  await mkdir(targetRoot, { recursive: true });
+
+  if (hasLegacyState) {
+    await rename(legacyStatePath, resolve(targetRoot, "latest-state.json"));
+  }
+
+  const legacyData =
+    keyedData ?? (await tryLoadLegacyJson(legacyDataPath, dataSchema));
+  if (hasLegacyData) {
+    if (legacyData === undefined) {
+      await rename(legacyDataPath, resolve(targetRoot, "latest-data.json"));
+    } else {
+      const migratedEvidence = legacyData.evidence.map((entry) => {
+        const legacyPrefix = `${legacyEvidencePath}${sep}`;
+        if (!entry.path.startsWith(legacyPrefix)) return entry;
+        return {
+          ...entry,
+          path: resolve(
+            targetRoot,
+            "evidence",
+            entry.path.slice(legacyPrefix.length),
+          ),
+        };
+      });
+      await saveJson(resolve(targetRoot, "latest-data.json"), {
+        ...legacyData,
+        evidence: migratedEvidence,
+      });
+      await rm(legacyDataPath, { force: true });
+    }
+  }
+
+  if (await pathExists(legacyEvidencePath)) {
+    await rename(legacyEvidencePath, resolve(targetRoot, "evidence"));
+  }
+}
+
+/** 迁移期读取旧文件：ENOENT 返回 undefined，损坏内容沿用既有读取错误语义。 */
+async function loadLegacyJson<T>(
+  path: string,
+  schema: z.ZodType<T>,
+): Promise<T> {
+  const parsed = await readLegacyJsonFile(path);
+  const result = schema.safeParse(parsed);
+  if (!result.success) {
+    throw new ReportingServiceError(
+      "Reporting 本机状态格式无效。",
+      "invalid-response",
+      false,
+    );
+  }
+  return result.data;
+}
+
+async function tryLoadLegacyJson<T>(
+  path: string,
+  schema: z.ZodType<T>,
+): Promise<T | undefined> {
+  try {
+    return await loadLegacyJson(path, schema);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readLegacyJsonFile(path: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return undefined;
+    }
+    throw new ReportingServiceError(
+      "无法读取 Reporting 本机状态。",
+      "network",
+      true,
+    );
+  }
+}
+
+/** 解析频道级 Reporting 目录（运营数据仓库的 reporting/<频道>/），并完成一次性迁移。 */
+async function resolveChannelReportingRoot(
   configPath: string,
   channelId: string,
-): Promise<ReportingPaths> {
+): Promise<string> {
   if (!/^UC[A-Za-z0-9_-]{22}$/.test(channelId)) {
     throw new UserInputError("频道 ID 必须是有效的 YouTube 频道 ID。");
   }
   const validated = await validateChannelOperationsConfig(configPath);
-  const root = resolve(
+  const channelRoot = resolve(
     dirname(validated.configPath),
     validated.config.global.dataDirectory,
     "reporting",
     channelId,
   );
+  await migrateLegacyReportingSlot(channelRoot);
+  return channelRoot;
+}
+
+async function resolvePaths(
+  configPath: string,
+  channelId: string,
+  reportType: string,
+): Promise<ReportingPaths> {
+  if (!REPORT_TYPE_PATTERN.test(reportType)) {
+    throw new UserInputError(
+      "Reporting 报告类型只能包含字母、数字、下划线和连字符。",
+    );
+  }
+  const channelRoot = await resolveChannelReportingRoot(configPath, channelId);
+  const root = resolve(channelRoot, reportType);
   return {
     root,
     state: resolve(root, "latest-state.json"),
@@ -524,12 +671,13 @@ function normalizeError(error: unknown): {
 export async function getReportingStatus(
   configPath: string,
   channelId: string,
+  options: { reportType: string },
 ): Promise<ReportingResult> {
-  const paths = await resolvePaths(configPath, channelId);
+  const paths = await resolvePaths(configPath, channelId, options.reportType);
   const state = withCanonicalJobId(
     await load(
       paths.state,
-      emptyState(channelId, "default", new Date().toISOString()),
+      emptyState(channelId, options.reportType, new Date().toISOString()),
       stateSchema,
     ),
   );
@@ -539,6 +687,59 @@ export async function getReportingStatus(
     dataSchema,
   );
   return { channelId, state, data: withCanonicalJobId(data) };
+}
+
+/**
+ * 列出频道下全部已有状态的报告类型（按报告类型名称稳定排序）。
+ * 只呈现真正同步过的报告类型目录，不为缺失类型虚构默认状态。
+ */
+export async function listReportingResults(
+  configPath: string,
+  channelId: string,
+): Promise<ReportingResult[]> {
+  const channelRoot = await resolveChannelReportingRoot(configPath, channelId);
+  let entries: Dirent[];
+  try {
+    entries = await readdir(channelRoot, { withFileTypes: true });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return [];
+    }
+    throw new ReportingServiceError(
+      "无法读取 Reporting 本机状态。",
+      "network",
+      true,
+    );
+  }
+  const results: ReportingResult[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const typeRoot = resolve(channelRoot, entry.name);
+    const statePath = resolve(typeRoot, "latest-state.json");
+    if (!(await pathExists(statePath))) continue;
+    const state = withCanonicalJobId(
+      await load(
+        statePath,
+        emptyState(channelId, entry.name, new Date().toISOString()),
+        stateSchema,
+      ),
+    );
+    const data = withCanonicalJobId(
+      await load(
+        resolve(typeRoot, "latest-data.json"),
+        emptyData(channelId, state.reportType),
+        dataSchema,
+      ),
+    );
+    results.push({ channelId, state, data });
+  }
+  return results.sort((left, right) =>
+    left.state.reportType.localeCompare(right.state.reportType),
+  );
 }
 
 export async function syncReporting(
@@ -555,7 +756,11 @@ export async function syncReporting(
   if (input.reportType.trim().length === 0)
     throw new UserInputError("必须提供 Reporting 报告类型。");
   const nowFactory = dependencies.now ?? (() => new Date());
-  const paths = await resolvePaths(configPath, input.channelId);
+  const paths = await resolvePaths(
+    configPath,
+    input.channelId,
+    input.reportType,
+  );
   let state = withCanonicalJobId(
     await load(
       paths.state,

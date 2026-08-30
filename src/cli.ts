@@ -84,6 +84,7 @@ import {
 import {
   getReportingStatus,
   GoogleReportingProvider,
+  listReportingResults,
   syncReporting,
 } from "./lib/reporting.js";
 import {
@@ -1623,13 +1624,31 @@ channelOperations
 
 channelOperations
   .command("reporting-status")
-  .description("查询异步 Reporting 报告状态")
+  .description("查询异步 Reporting 报告状态，可按报告类型查询")
   .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
   .requiredOption("--channel <channel-id>", "目标频道 ID")
-  .action(async (options: { config: string; channel: string }) =>
-    execute("异步 Reporting 状态", () =>
-      getReportingStatus(options.config, options.channel),
-    ),
+  .option(
+    "--report-type <type>",
+    "官方报告类型；缺省时列出全部已有状态的报告类型",
+  )
+  .action(
+    async (options: {
+      config: string;
+      channel: string;
+      reportType?: string;
+    }) => {
+      if (options.reportType === undefined) {
+        return execute("异步 Reporting 状态", async () => ({
+          channelId: options.channel,
+          reports: await listReportingResults(options.config, options.channel),
+        }));
+      }
+      return execute("异步 Reporting 状态", () =>
+        getReportingStatus(options.config, options.channel, {
+          reportType: options.reportType as string,
+        }),
+      );
+    },
   );
 
 channelOperations

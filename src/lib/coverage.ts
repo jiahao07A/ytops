@@ -8,7 +8,7 @@ import {
 import { getInventoryStatus } from "./inventory.js";
 import { getChannelConnectionStatus } from "./oauth.js";
 import { getRetentionStatus } from "./retention.js";
-import { getReportingStatus } from "./reporting.js";
+import { listReportingResults } from "./reporting.js";
 
 export type CoverageMatrixStatus =
   | "supported"
@@ -49,13 +49,13 @@ export async function getCoverageMatrix(
   );
   const inventoryConnection =
     inventoryConnections.length === 1 ? inventoryConnections[0] : undefined;
-  const [inventory, analytics, reporting, comments, retention] =
+  const [inventory, analytics, reportingResults, comments, retention] =
     await Promise.all([
       inventoryConnection === undefined
         ? Promise.resolve(undefined)
         : getInventoryStatus(configPath, channelId),
       getAnalyticsStatus(configPath, channelId),
-      getReportingStatus(configPath, channelId),
+      listReportingResults(configPath, channelId),
       getCommentsStatus(configPath, channelId),
       getRetentionStatus(configPath, channelId),
     ]);
@@ -117,16 +117,54 @@ export async function getCoverageMatrix(
             analytics.state.audienceCoverage === "complete"
           ? "supported"
           : "partial";
-  const reportingStatus: CoverageMatrixStatus =
-    reporting.state.status === "imported"
-      ? "supported"
-      : reporting.state.status === "requested" ||
-          reporting.state.status === "waiting" ||
-          reporting.state.status === "ready"
-        ? "async-processing"
-        : reporting.state.status === "failed"
-          ? "unavailable"
+  const reportingStatusEntries = reportingResults.map((reporting) => {
+    const status: CoverageMatrixStatus =
+      reporting.state.status === "imported"
+        ? "supported"
+        : reporting.state.status === "requested" ||
+            reporting.state.status === "waiting" ||
+            reporting.state.status === "ready"
+          ? "async-processing"
           : "unavailable";
+    return {
+      capability: "reporting.async",
+      source: reporting.data.source,
+      status,
+      scope: `报告类型 ${reporting.state.reportType}`,
+      reportStatus: reporting.state.status,
+      ...(reporting.data.dataAsOf === undefined
+        ? {}
+        : { dataAsOf: reporting.data.dataAsOf }),
+      ...(reporting.state.error === undefined
+        ? {}
+        : { reason: reporting.state.error.message }),
+      evidencePaths: safeEvidencePaths(
+        reporting.data.evidence.map((evidence) => evidence.path),
+      ),
+    };
+  });
+  const reportingMatrixEntries: Array<{
+    capability: string;
+    source: string;
+    status: CoverageMatrixStatus;
+    scope: string;
+    reportStatus?: string;
+    dataAsOf?: string;
+    reason?: string;
+    evidencePaths: string[];
+  }> =
+    reportingStatusEntries.length > 0
+      ? reportingStatusEntries
+      : [
+          {
+            capability: "reporting.async",
+            source: "youtube-reporting-api",
+            status: "unavailable",
+            scope: "异步 Reporting 报表",
+            reason: "尚未同步任何报告类型。",
+            evidencePaths: [],
+          },
+        ];
   const commentsStatus: CoverageMatrixStatus =
     comments.state.coverage === "permission-denied"
       ? "qualification-limited"
@@ -205,22 +243,7 @@ export async function getCoverageMatrix(
         reason: "高维查询不会预下载全部组合，结果必须以单次查询覆盖状态为准。",
         evidencePaths: [],
       },
-      {
-        capability: "reporting.async",
-        source: reporting.data.source,
-        status: reportingStatus,
-        scope: `报告类型 ${reporting.state.reportType}`,
-        reportStatus: reporting.state.status,
-        ...(reporting.data.dataAsOf === undefined
-          ? {}
-          : { dataAsOf: reporting.data.dataAsOf }),
-        ...(reporting.state.error === undefined
-          ? {}
-          : { reason: reporting.state.error.message }),
-        evidencePaths: safeEvidencePaths(
-          reporting.data.evidence.map((evidence) => evidence.path),
-        ),
-      },
+      ...reportingMatrixEntries,
       {
         capability: "comments.readonly",
         source: comments.data.source,

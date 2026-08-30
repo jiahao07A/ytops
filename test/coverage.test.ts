@@ -7,6 +7,91 @@ import { getCoverageMatrix } from "../src/lib/coverage.js";
 
 const channelId = "UC1111111111111111111111";
 
+interface ReportingSlotFixture {
+  reportType: string;
+  jobId: string;
+  status: "imported" | "failed";
+  rows: Array<Record<string, string | number>>;
+}
+
+/**
+ * 按新布局（reporting/<频道>/<报告类型>/）落盘 Reporting 同步状态，
+ * 供覆盖矩阵测试以磁盘状态构造方式断言各报告类型条目。
+ */
+async function writeReportingSlot(
+  root: string,
+  fixture: ReportingSlotFixture,
+): Promise<string> {
+  const typeRoot = join(
+    root,
+    ".ytops-data",
+    "reporting",
+    channelId,
+    fixture.reportType,
+  );
+  const evidenceFile = resolve(
+    typeRoot,
+    "evidence",
+    "2026-08-19T010000-000000Z-import.json",
+  );
+  const imported = fixture.status === "imported";
+  await mkdir(join(typeRoot, "evidence"), { recursive: true });
+  await writeFile(
+    evidenceFile,
+    `${JSON.stringify({ source: "youtube-reporting-api", phase: "import" })}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(typeRoot, "latest-state.json"),
+    `${JSON.stringify({
+      version: 1,
+      channelId,
+      jobId: fixture.jobId,
+      reportId: fixture.jobId,
+      reportType: fixture.reportType,
+      status: fixture.status,
+      coverage: imported ? "complete" : "unavailable",
+      updatedAt: "2026-08-19T01:00:00.000Z",
+      ...(imported
+        ? { importedAt: "2026-08-19T01:00:00.000Z" }
+        : {
+            error: {
+              kind: "not-ready",
+              message: "Reporting 报告不可用。",
+              retryable: true,
+            },
+          }),
+      ...(imported ? { dataAsOf: "2026-08-19T00:00:00.000Z" } : {}),
+      rowCount: imported ? fixture.rows.length : 0,
+    })}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(typeRoot, "latest-data.json"),
+    `${JSON.stringify({
+      version: 1,
+      channelId,
+      source: "youtube-reporting-api",
+      jobId: fixture.jobId,
+      reportId: fixture.jobId,
+      reportType: fixture.reportType,
+      rows: imported ? fixture.rows : [],
+      evidence: imported
+        ? [
+            {
+              path: evidenceFile,
+              fetchedAt: "2026-08-19T01:00:00.000Z",
+              phase: "import",
+            },
+          ]
+        : [],
+      ...(imported ? { dataAsOf: "2026-08-19T00:00:00.000Z" } : {}),
+    })}\n`,
+    "utf8",
+  );
+  return evidenceFile;
+}
+
 interface TestConnection {
   connectionId: string;
   channelId: string;
@@ -355,6 +440,76 @@ describe("覆盖矩阵与证据审计", () => {
         status: "qualification-limited",
         reason: "当前授权不包含 Analytics 读取权限。",
       });
+    } finally {
+      await cleanupFixture(root, configPath);
+    }
+  });
+
+  it("覆盖矩阵按报表类型分别呈现 Reporting 条目，互不合并", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-coverage-"));
+    const configPath = join(root, "config.json");
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const basicEvidenceFile = await writeReportingSlot(root, {
+        reportType: "channel-basic",
+        jobId: "job-basic-1",
+        status: "imported",
+        rows: [{ date: "2026-08-19", views: 5 }],
+      });
+      await writeReportingSlot(root, {
+        reportType: "channel-failed",
+        jobId: "job-failed-1",
+        status: "failed",
+        rows: [],
+      });
+
+      const matrix = await getCoverageMatrix(configPath, channelId);
+      const reportingEntries = matrix.entries.filter(
+        (entry) => entry.capability === "reporting.async",
+      );
+      expect(reportingEntries).toHaveLength(2);
+      expect(reportingEntries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            capability: "reporting.async",
+            status: "supported",
+            scope: "报告类型 channel-basic",
+            reportStatus: "imported",
+            dataAsOf: "2026-08-19T00:00:00.000Z",
+            evidencePaths: [basicEvidenceFile],
+          }),
+          expect.objectContaining({
+            capability: "reporting.async",
+            status: "unavailable",
+            scope: "报告类型 channel-failed",
+            reportStatus: "failed",
+            reason: "Reporting 报告不可用。",
+            evidencePaths: [],
+          }),
+        ]),
+      );
+      expect(JSON.stringify(matrix)).not.toContain("access-token");
+    } finally {
+      await cleanupFixture(root, configPath);
+    }
+  });
+
+  it("尚未同步任何报告类型时，Reporting 条目保持不可用且无证据入口", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-coverage-"));
+    const configPath = join(root, "config.json");
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const matrix = await getCoverageMatrix(configPath, channelId);
+      const reportingEntries = matrix.entries.filter(
+        (entry) => entry.capability === "reporting.async",
+      );
+      expect(reportingEntries).toEqual([
+        expect.objectContaining({
+          capability: "reporting.async",
+          status: "unavailable",
+          evidencePaths: [],
+        }),
+      ]);
     } finally {
       await cleanupFixture(root, configPath);
     }
