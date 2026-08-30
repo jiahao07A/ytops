@@ -11,7 +11,10 @@ import type { Dirent } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { validateChannelOperationsConfig } from "./config.js";
+import {
+  isValidYouTubeChannelId,
+  validateChannelOperationsConfig,
+} from "./config.js";
 import { ReportingServiceError, UserInputError } from "./errors.js";
 import {
   isFsCode,
@@ -479,7 +482,7 @@ async function resolveChannelReportingRoot(
   configPath: string,
   channelId: string,
 ): Promise<string> {
-  if (!/^UC[A-Za-z0-9_-]{22}$/.test(channelId)) {
+  if (!isValidYouTubeChannelId(channelId)) {
     throw new UserInputError("频道 ID 必须是有效的 YouTube 频道 ID。");
   }
   const validated = await validateChannelOperationsConfig(configPath);

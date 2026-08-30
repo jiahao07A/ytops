@@ -1,6 +1,10 @@
 import { dirname, resolve } from "node:path";
 import { REVENUE_ESTIMATE_METRIC } from "./analytics-catalog.js";
-import { getAnalyticsStatus } from "./analytics.js";
+import {
+  getAnalyticsStatus,
+  type AnalyticsCoverageStatus,
+  type AnalyticsRunStatus,
+} from "./analytics.js";
 import { getCommentsStatus } from "./comments.js";
 import {
   containsCredentialLikeText,
@@ -34,6 +38,23 @@ export interface CoverageMatrix {
   channelId: string;
   generatedAt: string;
   entries: CoverageMatrixEntry[];
+}
+
+/**
+ * 按覆盖状态与运行状态映射只读能力的矩阵状态：
+ * 权限不足→资格受限；覆盖完整且完成→支持；完成但覆盖部分→部分支持；其余不可用。
+ */
+function coverageAndRunToMatrixStatus(
+  coverage: AnalyticsCoverageStatus,
+  runStatus: "not-started" | "running" | "partial" | "completed" | "failed",
+): CoverageMatrixStatus {
+  if (coverage === "permission-denied") {
+    return "qualification-limited";
+  }
+  if (coverage === "complete" && runStatus === "completed") {
+    return "supported";
+  }
+  return runStatus === "completed" ? "partial" : "unavailable";
 }
 
 function safeEvidencePaths(paths: string[]): string[] {
@@ -166,24 +187,14 @@ export async function getCoverageMatrix(
             evidencePaths: [],
           },
         ];
-  const commentsStatus: CoverageMatrixStatus =
-    comments.state.coverage === "permission-denied"
-      ? "qualification-limited"
-      : comments.state.status === "completed" &&
-          comments.state.coverage === "complete"
-        ? "supported"
-        : comments.state.status === "completed"
-          ? "partial"
-          : "unavailable";
-  const retentionStatus: CoverageMatrixStatus =
-    retention.state.coverage === "permission-denied"
-      ? "qualification-limited"
-      : retention.state.coverage === "complete" &&
-          retention.state.status === "completed"
-        ? "supported"
-        : retention.state.status === "completed"
-          ? "partial"
-          : "unavailable";
+  const commentsStatus = coverageAndRunToMatrixStatus(
+    comments.state.coverage,
+    comments.state.status,
+  );
+  const retentionStatus = coverageAndRunToMatrixStatus(
+    retention.state.coverage,
+    retention.state.status,
+  );
   const revenueRowsPresent = [
     ...analytics.data.channelRows,
     ...analytics.data.videoRows,
