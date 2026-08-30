@@ -261,6 +261,7 @@ export interface ReportingResult {
 }
 
 /** 规范化读取视图的行；reach 报表行使用 camelCase 字段，其余列如实透传。 */
+/** 读取行与存储行同形；reach 报表的列名由 normalizeReportingRow 做映射，类型不逐族收窄。 */
 export type ReportingReadRow = ReportingRow;
 
 export interface ReportingReadResult {
@@ -346,7 +347,7 @@ const REPORT_TYPE_PATTERN = /^[A-Za-z0-9_-]+$/;
  * 官方报表版本号（a1/a3）会随时间演进，reportTypes.list 的实时返回
  * 才是权威来源，白名单会在官方升版时把仍可用的报表拒之门外。
  */
-export const REACH_REPORT_TYPE = ["channel_reach_basic_a1"] as const;
+export const REACH_REPORT_TYPE = "channel_reach_basic_a1";
 
 /** reach 基础报表族：官方列语义按族判断，版本号演进不改变列名。 */
 const REACH_BASIC_REPORT_TYPE_PATTERN = /^channel_reach_basic_/;
