@@ -49,7 +49,7 @@ const credentialValuePatterns = [
   /eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,
   /(?:^|[^A-Za-z0-9])(?:access[-_.]?(?:token|key)|refresh[-_.]?token|client[-_.]?secret|api[-_.]?key)=/i,
 ];
-const youtubeChannelIdPattern = /^UC[A-Za-z0-9_-]{22}$/;
+export const youtubeChannelIdPattern = /^UC[A-Za-z0-9_-]{22}$/;
 const youtubeVideoIdPattern = /^[A-Za-z0-9_-]{11}$/;
 const supportedAnalysisMetrics = new Set([
   ...CORE_ANALYTICS_METRICS,
@@ -98,7 +98,7 @@ function normalizeConfigurationKey(key: string): string {
   return key.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
-function isValidYouTubeChannelId(value: string): boolean {
+export function isValidYouTubeChannelId(value: string): boolean {
   return youtubeChannelIdPattern.test(value.trim());
 }
 

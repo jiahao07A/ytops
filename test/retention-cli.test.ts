@@ -4,16 +4,9 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { runCli } from "./cli-harness.js";
 
 const channelId = "UC1111111111111111111111";
-
-function runCli(args: string[]) {
-  return spawnSync(
-    process.execPath,
-    [resolve(process.cwd(), "dist", "cli.js"), ...args],
-    { encoding: "utf8" },
-  );
-}
 
 interface RetentionCliFixture {
   root: string;

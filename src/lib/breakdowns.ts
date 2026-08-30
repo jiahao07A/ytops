@@ -10,6 +10,7 @@ import {
   type AnalyticsRow,
 } from "./analytics.js";
 import {
+  REVENUE_CURRENCY,
   REVENUE_ESTIMATE_METRIC,
   SUPPORTED_ANALYSIS_DIMENSIONS,
 } from "./analytics-catalog.js";
@@ -320,7 +321,7 @@ export async function queryBreakdown(
         rows: [],
       };
     }
-    revenueCurrency = "USD";
+    revenueCurrency = REVENUE_CURRENCY;
   }
   const paths = await resolvePaths(configPath, input.channelId, query);
   try {

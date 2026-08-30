@@ -2,11 +2,13 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import {
   CORE_ANALYTICS_METRICS,
+  REVENUE_CURRENCY,
   REVENUE_ESTIMATE_METRIC,
   type AnalyticsDimension,
   type AnalyticsMetric,
 } from "./analytics-catalog.js";
 import {
+  isValidYouTubeChannelId,
   resolveRevenueOptIn,
   validateChannelOperationsConfig,
   type ChannelOperationsConfig,
@@ -227,7 +229,6 @@ interface AnalyticsPaths {
   state: string;
   data: string;
   evidence: string;
-  operationsConfig: ChannelOperationsConfig;
 }
 
 const rowSchema = z
@@ -438,8 +439,11 @@ function loadJson<T>(
 async function resolveAnalyticsPaths(
   configPath: string,
   channelId: string,
-): Promise<AnalyticsPaths> {
-  if (!/^UC[A-Za-z0-9_-]{22}$/.test(channelId)) {
+): Promise<{
+  paths: AnalyticsPaths;
+  operationsConfig: ChannelOperationsConfig;
+}> {
+  if (!isValidYouTubeChannelId(channelId)) {
     throw new UserInputError("频道 ID 必须是有效的 YouTube 频道 ID。");
   }
   const validated = await validateChannelOperationsConfig(configPath);
@@ -449,10 +453,12 @@ async function resolveAnalyticsPaths(
   );
   const root = resolve(dataDirectory, "analytics", channelId);
   return {
-    root,
-    state: resolve(root, "sync-state.json"),
-    data: resolve(root, "data.json"),
-    evidence: resolve(root, "evidence"),
+    paths: {
+      root,
+      state: resolve(root, "sync-state.json"),
+      data: resolve(root, "data.json"),
+      evidence: resolve(root, "evidence"),
+    },
     operationsConfig: validated.config,
   };
 }
@@ -555,7 +561,7 @@ export async function getAnalyticsStatus(
   configPath: string,
   channelId: string,
 ): Promise<AnalyticsSyncResult> {
-  const paths = await resolveAnalyticsPaths(configPath, channelId);
+  const { paths } = await resolveAnalyticsPaths(configPath, channelId);
   const now = new Date().toISOString();
   const state = await loadJson(
     paths.state,
@@ -646,11 +652,11 @@ export async function syncAnalytics(
   ) {
     throw new UserInputError("Analytics 指标必须来自首期支持的核心指标目录。");
   }
-  const paths = await resolveAnalyticsPaths(configPath, input.channelId);
-  const revenueOptIn = resolveRevenueOptIn(
-    paths.operationsConfig,
+  const { paths, operationsConfig } = await resolveAnalyticsPaths(
+    configPath,
     input.channelId,
   );
+  const revenueOptIn = resolveRevenueOptIn(operationsConfig, input.channelId);
   // 货币 opt-in 开启时，核心两阶段自动携带收入指标并以显式 USD 请求；
   // 观众画像组不携带收入，避免把估算值混入结构口径（ADR 0003）。
   const syncMetrics: AnalyticsMetric[] = revenueOptIn
@@ -744,7 +750,7 @@ export async function syncAnalytics(
         endDate: state.endDate,
         metrics: syncMetrics,
         dimensions: ["day"],
-        ...(revenueOptIn ? { currency: "USD" } : {}),
+        ...(revenueOptIn ? { currency: REVENUE_CURRENCY } : {}),
         startIndex: state.checkpoint.channelStartIndex,
         maxResults: ANALYTICS_PAGE_SIZE,
       };
@@ -804,7 +810,7 @@ export async function syncAnalytics(
         endDate: state.endDate,
         metrics: syncMetrics,
         dimensions: ["video"],
-        ...(revenueOptIn ? { currency: "USD" } : {}),
+        ...(revenueOptIn ? { currency: REVENUE_CURRENCY } : {}),
         ...(videoIds.length === 0
           ? {}
           : { filters: { video: videoIds.join(",") } }),

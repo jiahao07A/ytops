@@ -15,6 +15,9 @@ export const CORE_ANALYTICS_METRICS = [
 
 export const REVENUE_ESTIMATE_METRIC = "estimatedRevenue";
 
+/** ADR 0003：货币分析请求显式使用 USD，避免依赖官方默认值。 */
+export const REVENUE_CURRENCY = "USD";
+
 export type AnalyticsMetric =
   (typeof CORE_ANALYTICS_METRICS)[number] | typeof REVENUE_ESTIMATE_METRIC;
 

@@ -1,6 +1,9 @@
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
-import { validateChannelOperationsConfig } from "./config.js";
+import {
+  isValidYouTubeChannelId,
+  validateChannelOperationsConfig,
+} from "./config.js";
 import {
   classifyHttpResponseError,
   RETENTION_FAILURE_KINDS,
@@ -464,7 +467,7 @@ async function resolveRetentionPaths(
   configPath: string,
   channelId: string,
 ): Promise<RetentionPaths> {
-  if (!/^UC[A-Za-z0-9_-]{22}$/.test(channelId)) {
+  if (!isValidYouTubeChannelId(channelId)) {
     throw new UserInputError("频道 ID 必须是有效的 YouTube 频道 ID。");
   }
   const validated = await validateChannelOperationsConfig(configPath);

@@ -1,4 +1,5 @@
 import { dirname, resolve } from "node:path";
+import { REVENUE_ESTIMATE_METRIC } from "./analytics-catalog.js";
 import { getAnalyticsStatus } from "./analytics.js";
 import { getCommentsStatus } from "./comments.js";
 import {
@@ -186,7 +187,7 @@ export async function getCoverageMatrix(
   const revenueRowsPresent = [
     ...analytics.data.channelRows,
     ...analytics.data.videoRows,
-  ].some((row) => "estimatedRevenue" in row.metrics);
+  ].some((row) => row.metrics[REVENUE_ESTIMATE_METRIC] !== undefined);
   const revenueStatus: CoverageMatrixStatus = !analytics.state.revenueOptIn
     ? "qualification-limited"
     : revenueRowsPresent
@@ -264,7 +265,7 @@ export async function getCoverageMatrix(
         evidencePaths: safeEvidencePaths(
           analytics.data.evidence
             .filter((evidence) =>
-              evidence.request.metrics.includes("estimatedRevenue"),
+              evidence.request.metrics.includes(REVENUE_ESTIMATE_METRIC),
             )
             .map((evidence) => evidence.path),
         ),
