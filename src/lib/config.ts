@@ -14,6 +14,7 @@ import isoCountries from "i18n-iso-countries";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import {
+  AUDIENCE_VIEWER_PERCENTAGE_METRIC,
   CORE_ANALYTICS_METRICS,
   REVENUE_ESTIMATE_METRIC,
   SUPPORTED_ANALYSIS_DIMENSIONS,
@@ -54,6 +55,7 @@ const youtubeVideoIdPattern = /^[A-Za-z0-9_-]{11}$/;
 const supportedAnalysisMetrics = new Set([
   ...CORE_ANALYTICS_METRICS,
   REVENUE_ESTIMATE_METRIC,
+  AUDIENCE_VIEWER_PERCENTAGE_METRIC,
 ]);
 const supportedAnalysisDimensions = new Set(SUPPORTED_ANALYSIS_DIMENSIONS);
 const supportedAnalysisDateRanges = new Set([

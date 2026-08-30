@@ -1,6 +1,8 @@
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import {
+  AUDIENCE_VIEWER_METRICS,
+  AUDIENCE_VIEWER_PERCENTAGE_METRIC,
   CORE_ANALYTICS_METRICS,
   REVENUE_CURRENCY,
   REVENUE_ESTIMATE_METRIC,
@@ -45,11 +47,25 @@ export const ANALYTICS_PAGE_SIZE = 200;
 export type AnalyticsPhase = "channel" | "video" | "audience" | "complete";
 
 // 观众画像数据默认同步的维度组：频道级×日，每组一次官方查询。
-const AUDIENCE_BREAKDOWN_GROUPS: AnalyticsDimension[][] = [
-  ["day", "trafficSourceType"],
-  ["day", "country"],
-  ["day", "ageGroup", "gender"],
-  ["day", "subscribedStatus"],
+// 官方对指标组合有硬约束：观看类指标不支持人口统计维度，人口统计报表
+// 只支持 viewerPercentage，因此每组携带各自的指标集（真实频道实测裁决）。
+const AUDIENCE_BREAKDOWN_GROUPS: Array<{
+  dimensions: AnalyticsDimension[];
+  metrics: AnalyticsMetric[];
+}> = [
+  {
+    dimensions: ["day", "trafficSourceType"],
+    metrics: [...AUDIENCE_VIEWER_METRICS],
+  },
+  { dimensions: ["day", "country"], metrics: [...AUDIENCE_VIEWER_METRICS] },
+  {
+    dimensions: ["day", "ageGroup", "gender"],
+    metrics: [AUDIENCE_VIEWER_PERCENTAGE_METRIC],
+  },
+  {
+    dimensions: ["day", "subscribedStatus"],
+    metrics: [...AUDIENCE_VIEWER_METRICS],
+  },
 ];
 
 export type AnalyticsRunStatus =
@@ -873,8 +889,8 @@ export async function syncAnalytics(
         group: 0,
         startIndex: 1,
       };
-      const dimensions = AUDIENCE_BREAKDOWN_GROUPS[audienceCheckpoint.group];
-      if (dimensions === undefined) {
+      const group = AUDIENCE_BREAKDOWN_GROUPS[audienceCheckpoint.group];
+      if (group === undefined) {
         state = { ...state, phase: "complete" };
         break;
       }
@@ -882,8 +898,8 @@ export async function syncAnalytics(
         channelId: access.channelId,
         startDate: state.startDate,
         endDate: state.endDate,
-        metrics,
-        dimensions,
+        metrics: group.metrics,
+        dimensions: group.dimensions,
         startIndex: audienceCheckpoint.startIndex,
         maxResults: ANALYTICS_PAGE_SIZE,
       };

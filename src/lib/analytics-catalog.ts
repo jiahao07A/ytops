@@ -15,11 +15,24 @@ export const CORE_ANALYTICS_METRICS = [
 
 export const REVENUE_ESTIMATE_METRIC = "estimatedRevenue";
 
+/** 官方人口统计报表（ageGroup/gender/video）专用的占比指标。 */
+export const AUDIENCE_VIEWER_PERCENTAGE_METRIC = "viewerPercentage";
+
 /** ADR 0003：货币分析请求显式使用 USD，避免依赖官方默认值。 */
 export const REVENUE_CURRENCY = "USD";
 
 export type AnalyticsMetric =
-  (typeof CORE_ANALYTICS_METRICS)[number] | typeof REVENUE_ESTIMATE_METRIC;
+  | (typeof CORE_ANALYTICS_METRICS)[number]
+  | typeof REVENUE_ESTIMATE_METRIC
+  | typeof AUDIENCE_VIEWER_PERCENTAGE_METRIC;
+
+/** 观众画像阶段可携带的观看类指标（官方流量来源/地域/订阅状态报表均支持）。 */
+export const AUDIENCE_VIEWER_METRICS = [
+  "views",
+  "engagedViews",
+  "estimatedMinutesWatched",
+  "averageViewDuration",
+] as const;
 
 export const SUPPORTED_ANALYSIS_DIMENSIONS = [
   "day",

@@ -197,18 +197,28 @@ describe("频道核心 Analytics", () => {
         filters: { video: "video-001" },
         startIndex: 1,
       });
+      const viewerMetrics = [
+        "views",
+        "engagedViews",
+        "estimatedMinutesWatched",
+        "averageViewDuration",
+      ];
       expect(provider.queries[2]).toMatchObject({
         dimensions: ["day", "trafficSourceType"],
+        metrics: viewerMetrics,
         startIndex: 1,
       });
       expect(provider.queries[3]).toMatchObject({
         dimensions: ["day", "country"],
+        metrics: viewerMetrics,
       });
       expect(provider.queries[4]).toMatchObject({
         dimensions: ["day", "ageGroup", "gender"],
+        metrics: ["viewerPercentage"],
       });
       expect(provider.queries[5]).toMatchObject({
         dimensions: ["day", "subscribedStatus"],
+        metrics: viewerMetrics,
       });
       expect(result.data.audienceRows).toHaveLength(4);
       const evidence = await readFile(result.data.evidence[0].path, "utf8");

@@ -8,6 +8,9 @@
       "quotaBudget": 10000,
       "initialBackfillDays": 365
     },
+    "analytics": {
+      "revenueOptIn": true
+    },
     "rawEvidenceRetentionDays": 365
   },
   "channels": [],
@@ -21,7 +24,9 @@
         "comments",
         "shares"
       ],
-      "dimensions": ["day"],
+      "dimensions": [
+        "day"
+      ],
       "dateRange": "last-28-days",
       "filters": {}
     }

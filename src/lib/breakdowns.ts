@@ -9,6 +9,7 @@ import {
   type AnalyticsRow,
 } from "./analytics.js";
 import {
+  AUDIENCE_VIEWER_PERCENTAGE_METRIC,
   CORE_ANALYTICS_METRICS,
   REVENUE_CURRENCY,
   REVENUE_ESTIMATE_METRIC,
@@ -28,6 +29,7 @@ import {
 export const BREAKDOWN_METRICS = [
   ...CORE_ANALYTICS_METRICS,
   REVENUE_ESTIMATE_METRIC,
+  AUDIENCE_VIEWER_PERCENTAGE_METRIC,
 ] as const;
 export const BREAKDOWN_DIMENSIONS = SUPPORTED_ANALYSIS_DIMENSIONS;
 
@@ -125,6 +127,17 @@ export function validateBreakdownQuery(
     throw new UserInputError(
       "收入估算指标必须按 day 维度查询，避免把估算值误当作视频明细。",
     );
+  }
+  if (profile.metrics.includes(AUDIENCE_VIEWER_PERCENTAGE_METRIC)) {
+    const demographic = profile.dimensions.some(
+      (dimension) =>
+        dimension === "ageGroup" || dimension === "gender" || dimension === "video",
+    );
+    if (!demographic) {
+      throw new UserInputError(
+        "观众占比指标必须与年龄、性别或视频维度组合查询。",
+      );
+    }
   }
   if (profile.startDate > profile.endDate) {
     throw new UserInputError("高维 Analytics 开始日期不能晚于结束日期。");
