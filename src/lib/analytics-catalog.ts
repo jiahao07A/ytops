@@ -26,6 +26,7 @@ export const SUPPORTED_ANALYSIS_DIMENSIONS = [
   "country",
   "ageGroup",
   "gender",
+  "subscribedStatus",
 ] as const;
 
 export type AnalyticsDimension = (typeof SUPPORTED_ANALYSIS_DIMENSIONS)[number];

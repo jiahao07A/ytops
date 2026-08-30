@@ -102,6 +102,16 @@ describe("高维 Analytics 配置档案", () => {
         filters: {},
       }),
     ).toThrow("收入估算");
+
+    expect(() =>
+      validateBreakdownQuery({
+        metrics: ["estimatedMinutesWatched"],
+        dimensions: ["day", "subscribedStatus"],
+        startDate: "2026-01-01",
+        endDate: "2026-01-02",
+        filters: {},
+      }),
+    ).not.toThrow();
   });
 
   it("收入资格不足时标记 permission-denied，不调用官方适配器", async () => {
