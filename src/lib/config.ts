@@ -959,6 +959,13 @@ export function applyChannelOperationsConfigOverrides(
   return effectiveConfig;
 }
 
+export function hasAnyRevenueOptIn(config: ChannelOperationsConfig): boolean {
+  return (
+    config.global.analytics?.revenueOptIn === true ||
+    config.channels.some((channel) => channel.analytics?.revenueOptIn === true)
+  );
+}
+
 export function resolveRevenueOptIn(
   config: ChannelOperationsConfig,
   channelId: string,

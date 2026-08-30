@@ -55,6 +55,7 @@ import {
   OAuthTokenRefreshError,
   selectChannelConnection,
   YOUTUBE_ANALYTICS_READONLY_SCOPE,
+  YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE,
   YOUTUBE_FORCE_SSL_SCOPE,
 } from "./lib/oauth.js";
 import {
@@ -1176,6 +1177,10 @@ channelOperations
   .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
   .option("--analytics", "同时申请只读 YouTube Analytics 权限")
   .option(
+    "--analytics-revenue",
+    "同时申请货币分析只读权限；要求配置已显式 opt-in（ADR 0003）",
+  )
+  .option(
     "--comments",
     "同时申请评论读取所需的官方权限；应用仍只执行评论列表读取",
   )
@@ -1189,6 +1194,7 @@ channelOperations
       config: string;
       redirectUri: string;
       analytics?: boolean;
+      analyticsRevenue?: boolean;
       comments?: boolean;
     }) =>
       execute("频道 OAuth 授权", () =>
@@ -1198,7 +1204,9 @@ channelOperations
             "Google OAuth 客户端 ID",
           ),
           redirectUri: options.redirectUri,
-          ...((options.analytics ?? false) || (options.comments ?? false)
+          ...((options.analytics ?? false) ||
+          (options.comments ?? false) ||
+          (options.analyticsRevenue ?? false)
             ? {
                 scopes: [
                   "https://www.googleapis.com/auth/youtube.readonly",
@@ -1206,10 +1214,20 @@ channelOperations
                     ? [YOUTUBE_ANALYTICS_READONLY_SCOPE]
                     : []),
                   ...(options.comments ? [YOUTUBE_FORCE_SSL_SCOPE] : []),
+                  ...(options.analyticsRevenue
+                    ? [YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE]
+                    : []),
                 ],
               }
             : {}),
-          ...(options.comments ? { capabilities: { comments: true } } : {}),
+          ...((options.comments ?? false) || (options.analyticsRevenue ?? false)
+            ? {
+                capabilities: {
+                  comments: options.comments,
+                  analyticsRevenue: options.analyticsRevenue,
+                },
+              }
+            : {}),
         }),
       ),
   );

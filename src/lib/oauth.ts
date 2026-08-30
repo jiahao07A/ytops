@@ -12,6 +12,7 @@ import { OAuth2Client, type Credentials } from "google-auth-library";
 import { z } from "zod";
 import {
   containsCredentialLikeText,
+  hasAnyRevenueOptIn,
   validateChannelOperationsConfig,
 } from "./config.js";
 import { OAuthServiceError, UserInputError } from "./errors.js";
@@ -26,6 +27,12 @@ export const YOUTUBE_ANALYTICS_READONLY_SCOPE =
  */
 export const YOUTUBE_FORCE_SSL_SCOPE =
   "https://www.googleapis.com/auth/youtube.force-ssl";
+/**
+ * 货币（收入）分析只读 scope。按 ADR 0003 默认不申请：仅在配置显式 opt-in
+ * 且授权命令显式声明时才会进入 scope 白名单校验。
+ */
+export const YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE =
+  "https://www.googleapis.com/auth/yt-analytics-monetary.readonly";
 
 const AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
@@ -36,6 +43,7 @@ const ALLOWED_OAUTH_SCOPES = new Set([
   YOUTUBE_READONLY_SCOPE,
   YOUTUBE_ANALYTICS_READONLY_SCOPE,
   YOUTUBE_FORCE_SSL_SCOPE,
+  YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE,
 ]);
 
 export interface ChannelSummary {
@@ -515,6 +523,7 @@ export interface OAuthWorkflowDependencies {
 
 export interface OAuthRequestedCapabilities {
   comments?: boolean;
+  analyticsRevenue?: boolean;
 }
 
 interface WorkflowPaths {
@@ -1076,12 +1085,22 @@ export async function beginChannelOAuth(
       (scope) =>
         !ALLOWED_OAUTH_SCOPES.has(scope) ||
         (scope === YOUTUBE_FORCE_SSL_SCOPE &&
-          input.capabilities?.comments !== true),
+          input.capabilities?.comments !== true) ||
+        (scope === YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE &&
+          input.capabilities?.analyticsRevenue !== true),
     )
   ) {
     throw new UserInputError(
       "OAuth 必须包含 YouTube 只读范围，且只允许请求已支持的频道、Analytics 或评论读取范围。",
     );
+  }
+  if (requestedScopes.includes(YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE)) {
+    const { config } = await validateChannelOperationsConfig(configPath);
+    if (!hasAnyRevenueOptIn(config)) {
+      throw new UserInputError(
+        "货币分析权限未在配置中显式 opt-in（ADR 0003）：请先运行 config set-global --analytics-revenue-opt-in true，再重新授权。",
+      );
+    }
   }
 
   const paths = await resolveWorkflowPaths(configPath);

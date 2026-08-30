@@ -22,6 +22,7 @@ import {
   OAuthTokenRefreshError,
   GoogleOAuthProvider,
   MemoryCredentialStore,
+  YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE,
   beginChannelOAuth,
   completeChannelOAuth,
   getDefaultOAuthCredentialPath,
@@ -30,7 +31,10 @@ import {
   selectChannelConnection,
   WindowsDpapiCredentialStore,
 } from "../src/lib/oauth.js";
-import { initializeChannelOperationsConfig } from "../src/lib/config.js";
+import {
+  initializeChannelOperationsConfig,
+  updateGlobalChannelOperationsConfig,
+} from "../src/lib/config.js";
 import { OAuthServiceError } from "../src/lib/errors.js";
 
 const testWindowsDpapi = process.platform === "win32" ? it : it.skip;
@@ -464,6 +468,62 @@ describe("频道 OAuth 接入", () => {
         ),
       ).resolves.toMatchObject({
         scopes: [YOUTUBE_READONLY_SCOPE, YOUTUBE_FORCE_SSL_SCOPE],
+      });
+    });
+  });
+
+  it("货币权限未 opt-in 时拒绝申请货币 scope，且绝不伪装成零值", async () => {
+    await withOAuthFixture(async ({ configPath, store, provider }) => {
+      await expect(
+        beginChannelOAuth(
+          configPath,
+          {
+            clientId: "client-id",
+            redirectUri: "http://127.0.0.1:8765/oauth2callback",
+            scopes: [
+              YOUTUBE_READONLY_SCOPE,
+              YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE,
+            ],
+            capabilities: { analyticsRevenue: true },
+          },
+          {
+            provider,
+            credentialStore: store,
+            stateFactory: () => "state-token-long-enough",
+          },
+        ),
+      ).rejects.toThrow("货币");
+    });
+  });
+
+  it("配置显式 opt-in 后允许申请货币 scope", async () => {
+    await withOAuthFixture(async ({ configPath, store, provider }) => {
+      await updateGlobalChannelOperationsConfig(configPath, {
+        analytics: { revenueOptIn: true },
+      });
+      await expect(
+        beginChannelOAuth(
+          configPath,
+          {
+            clientId: "client-id",
+            redirectUri: "http://127.0.0.1:8765/oauth2callback",
+            scopes: [
+              YOUTUBE_READONLY_SCOPE,
+              YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE,
+            ],
+            capabilities: { analyticsRevenue: true },
+          },
+          {
+            provider,
+            credentialStore: store,
+            stateFactory: () => "state-token-long-enough",
+          },
+        ),
+      ).resolves.toMatchObject({
+        scopes: [
+          YOUTUBE_READONLY_SCOPE,
+          YOUTUBE_ANALYTICS_MONETARY_READONLY_SCOPE,
+        ],
       });
     });
   });
