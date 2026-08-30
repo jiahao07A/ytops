@@ -14,6 +14,12 @@ import { z } from "zod";
 import { validateChannelOperationsConfig } from "./config.js";
 import { ReportingServiceError, UserInputError } from "./errors.js";
 import {
+  isFsCode,
+  isRecord,
+  loadValidatedJsonFile,
+  saveJsonFile,
+} from "./fs-json.js";
+import {
   getChannelAccessToken,
   type OAuthWorkflowDependencies,
 } from "./oauth.js";
@@ -259,6 +265,7 @@ export interface ReportingReadResult {
   status: ReportingRunStatus;
   coverage: ReportingCoverageStatus;
   dataAsOf?: string;
+  evidencePaths: string[];
   rows: ReportingReadRow[];
 }
 
@@ -335,7 +342,9 @@ const REPORT_TYPE_PATTERN = /^[A-Za-z0-9_-]+$/;
  * 官方报表版本号（a1/a3）会随时间演进，reportTypes.list 的实时返回
  * 才是权威来源，白名单会在官方升版时把仍可用的报表拒之门外。
  */
-export const REPORTING_REPORT_TYPES = ["channel_reach_basic_a1"] as const;
+export const REGISTERED_REPORTING_REPORT_TYPES = [
+  "channel_reach_basic_a1",
+] as const;
 
 /** reach 基础报表族：官方列语义按族判断，版本号演进不改变列名。 */
 const REACH_BASIC_REPORT_TYPE_PATTERN = /^channel_reach_basic_/;
@@ -407,7 +416,7 @@ async function migrateLegacyReportingSlot(channelRoot: string): Promise<void> {
           ),
         };
       });
-      await saveJson(resolve(targetRoot, "latest-data.json"), {
+      await saveJsonFile(resolve(targetRoot, "latest-data.json"), {
         ...legacyData,
         evidence: migratedEvidence,
       });
@@ -452,11 +461,7 @@ async function readLegacyJsonFile(path: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(path, "utf8"));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
+    if (isFsCode(error, "ENOENT")) {
       return undefined;
     }
     throw new ReportingServiceError(
@@ -506,49 +511,25 @@ async function resolvePaths(
   };
 }
 
-async function saveJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await rename(temporaryPath, path);
-}
-
 async function load<T>(
   path: string,
   fallback: T,
   schema: z.ZodType<T>,
 ): Promise<T> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    const result = schema.safeParse(parsed);
-    if (!result.success)
-      throw new ReportingServiceError(
+  return loadValidatedJsonFile(path, fallback, schema, {
+    corrupt: () =>
+      new ReportingServiceError(
         "Reporting 本机状态格式无效。",
         "invalid-response",
         false,
-      );
-    return result.data;
-  } catch (error) {
-    if (error instanceof ReportingServiceError) throw error;
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    )
-      return fallback;
-    throw new ReportingServiceError(
-      "无法读取 Reporting 本机状态。",
-      "network",
-      true,
-    );
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+      ),
+    unreadable: () =>
+      new ReportingServiceError(
+        "无法读取 Reporting 本机状态。",
+        "network",
+        true,
+      ),
+  });
 }
 
 function requireJobId(input: { jobId?: string; reportId?: string }): string {
@@ -766,6 +747,7 @@ export async function readReportingRows(
     ...(data.dataAsOf === undefined && state.dataAsOf === undefined
       ? {}
       : { dataAsOf: data.dataAsOf ?? state.dataAsOf }),
+    evidencePaths: data.evidence.map((entry) => entry.path),
     rows,
   };
 }
@@ -782,11 +764,7 @@ export async function readReportingRows(
   try {
     entries = await readdir(channelRoot, { withFileTypes: true });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
+    if (isFsCode(error, "ENOENT")) {
       return [];
     }
     throw new ReportingServiceError(
@@ -911,7 +889,7 @@ export async function syncReporting(
         paths.evidence,
         `${requestedAt.replace(/[^0-9A-Za-z]/g, "-")}-request.json`,
       );
-      await saveJson(evidencePath, {
+      await saveJsonFile(evidencePath, {
         source: "youtube-reporting-api",
         phase: "request",
         reportType: input.reportType,
@@ -928,8 +906,8 @@ export async function syncReporting(
           { path: evidencePath, fetchedAt: requestedAt, phase: "request" },
         ],
       };
-      await saveJson(paths.state, state);
-      await saveJson(paths.data, data);
+      await saveJsonFile(paths.state, state);
+      await saveJsonFile(paths.data, data);
     }
     if (jobId === undefined) {
       throw new ReportingServiceError(
@@ -954,7 +932,7 @@ export async function syncReporting(
         coverage: "async-processing",
         updatedAt: checkedAt,
       };
-      await saveJson(paths.state, state);
+      await saveJsonFile(paths.state, state);
       return { channelId: input.channelId, state, data };
     }
     if (reportStatus.status === "failed") {
@@ -972,7 +950,7 @@ export async function syncReporting(
         updatedAt: checkedAt,
         error,
       };
-      await saveJson(paths.state, state);
+      await saveJsonFile(paths.state, state);
       return { channelId: input.channelId, state, data };
     }
     state = {
@@ -983,7 +961,7 @@ export async function syncReporting(
       coverage: "async-processing",
       updatedAt: checkedAt,
     };
-    await saveJson(paths.state, state);
+    await saveJsonFile(paths.state, state);
     const downloaded = await provider.downloadReport({
       accessToken: access.accessToken,
       channelId: access.channelId,
@@ -996,7 +974,7 @@ export async function syncReporting(
       paths.evidence,
       `${checkedAt.replace(/[^0-9A-Za-z]/g, "-")}-import.json`,
     );
-    await saveJson(evidencePath, {
+    await saveJsonFile(evidencePath, {
       source: "youtube-reporting-api",
       phase: "import",
       jobId,
@@ -1032,8 +1010,8 @@ export async function syncReporting(
       rowCount: rows.length,
       error: undefined,
     };
-    await saveJson(paths.data, data);
-    await saveJson(paths.state, state);
+    await saveJsonFile(paths.data, data);
+    await saveJsonFile(paths.state, state);
     return { channelId: input.channelId, state, data };
   } catch (error) {
     const normalized = normalizeError(error);
@@ -1045,7 +1023,7 @@ export async function syncReporting(
       updatedAt: nowFactory().toISOString(),
       error: normalized,
     };
-    await saveJson(paths.state, state);
+    await saveJsonFile(paths.state, state);
     return { channelId: input.channelId, state, data };
   }
 }

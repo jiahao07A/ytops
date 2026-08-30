@@ -8,7 +8,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -1575,5 +1575,66 @@ describe("三层配置合同", () => {
       expect(payload.error.message).toContain("1 到 168");
       expect(payload.error.message).toContain("修正");
     });
+  });
+});
+
+describe("货币分析权限 opt-in 配置面", () => {
+  it("set-global 与 set-channel 都能持久化 opt-in，频道覆盖优先", () => {
+    const root = join(tmpdir(), `ytops-cli-optin-${randomUUID()}`);
+    const configPath = join(root, "config.json");
+    try {
+      const initialized = runCli([
+        "--json",
+        "config",
+        "init",
+        "--output",
+        configPath,
+      ]);
+      expect(initialized.status).toBe(0);
+
+      const globalSet = runCli([
+        "--json",
+        "config",
+        "set-global",
+        "--config",
+        configPath,
+        "--analytics-revenue-opt-in",
+        "true",
+      ]);
+      expect(globalSet.status).toBe(0);
+      expect(JSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({
+        global: { analytics: { revenueOptIn: true } },
+      });
+
+      const channelSet = runCli([
+        "--json",
+        "config",
+        "set-channel",
+        "--config",
+        configPath,
+        "--channel",
+        "UC1111111111111111111111",
+        "--channel-analytics-revenue-opt-in",
+        "false",
+      ]);
+      expect(channelSet.status).toBe(0);
+      expect(JSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({
+        channels: [
+          {
+            channelId: "UC1111111111111111111111",
+            analytics: { revenueOptIn: false },
+          },
+        ],
+      });
+
+      const explain = runCli(["--json", "config", "explain"]);
+      expect(explain.status).toBe(0);
+      expect(JSON.parse(explain.stdout)).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      if (existsSync(configPath)) unlinkSync(configPath);
+      if (existsSync(root)) rmdirSync(root);
+    }
   });
 });

@@ -11,7 +11,11 @@ import {
   validateChannelOperationsConfig,
   type ChannelOperationsConfig,
 } from "./config.js";
-import { AnalyticsServiceError, UserInputError } from "./errors.js";
+import {
+  AnalyticsServiceError,
+  classifyHttpResponseError,
+  UserInputError,
+} from "./errors.js";
 import {
   isFsCode,
   isRecord,
@@ -431,10 +435,6 @@ function loadJson<T>(
   });
 }
 
-async function saveJson(path: string, value: unknown): Promise<void> {
-  await saveJsonFile(path, value);
-}
-
 async function resolveAnalyticsPaths(
   configPath: string,
   channelId: string,
@@ -541,7 +541,7 @@ async function saveEvidence(
 ): Promise<string> {
   const fileName = `${fetchedAt.replace(/[^0-9A-Za-z]/g, "-")}-${phase}-${Date.now()}.json`;
   const path = resolve(paths.evidence, fileName);
-  await saveJson(path, {
+  await saveJsonFile(path, {
     source: "youtube-analytics-api",
     phase,
     request,
@@ -710,7 +710,7 @@ export async function syncAnalytics(
       revenueOptIn,
     };
   }
-  await saveJson(paths.state, state);
+  await saveJsonFile(paths.state, state);
 
   let access: { channelId: string; accessToken: string };
   try {
@@ -788,8 +788,8 @@ export async function syncAnalytics(
         dataAsOf: result.dataAsOf ?? fetchedAt,
         updatedAt: fetchedAt,
       };
-      await saveJson(paths.data, data);
-      await saveJson(paths.state, state);
+      await saveJsonFile(paths.data, data);
+      await saveJsonFile(paths.state, state);
       workUnits += 1;
       if (result.nextStartIndex === undefined) {
         state = { ...state, phase: "video" };
@@ -851,8 +851,8 @@ export async function syncAnalytics(
         dataAsOf: result.dataAsOf ?? fetchedAt,
         updatedAt: fetchedAt,
       };
-      await saveJson(paths.data, data);
-      await saveJson(paths.state, state);
+      await saveJsonFile(paths.data, data);
+      await saveJsonFile(paths.state, state);
       workUnits += 1;
       if (result.nextStartIndex === undefined) {
         state = { ...state, phase: "audience" };
@@ -865,12 +865,11 @@ export async function syncAnalytics(
         group: 0,
         startIndex: 1,
       };
-      if (audienceCheckpoint.group >= AUDIENCE_BREAKDOWN_GROUPS.length) {
+      const dimensions = AUDIENCE_BREAKDOWN_GROUPS[audienceCheckpoint.group];
+      if (dimensions === undefined) {
         state = { ...state, phase: "complete" };
         break;
       }
-      const dimensions =
-        AUDIENCE_BREAKDOWN_GROUPS[audienceCheckpoint.group] ?? [];
       const request: AnalyticsQuery = {
         channelId: access.channelId,
         startDate: state.startDate,
@@ -932,8 +931,8 @@ export async function syncAnalytics(
           dataAsOf: result.dataAsOf ?? fetchedAt,
           updatedAt: fetchedAt,
         };
-        await saveJson(paths.data, data);
-        await saveJson(paths.state, state);
+        await saveJsonFile(paths.data, data);
+        await saveJsonFile(paths.state, state);
         workUnits += 1;
         if (
           result.nextStartIndex === undefined &&
@@ -962,7 +961,7 @@ export async function syncAnalytics(
           },
           updatedAt: fetchedAt,
         };
-        await saveJson(paths.state, state);
+        await saveJsonFile(paths.state, state);
         workUnits += 1;
       }
     }
@@ -992,8 +991,8 @@ export async function syncAnalytics(
       updatedAt: completedAt,
       dataAsOf: data.dataAsOf ?? completedAt,
     };
-    await saveJson(paths.state, state);
-    await saveJson(paths.data, data);
+    await saveJsonFile(paths.state, state);
+    await saveJsonFile(paths.data, data);
     return { channelId: input.channelId, state, data };
   } catch (error) {
     return finishAnalyticsFailure(
@@ -1025,7 +1024,7 @@ async function finishAnalyticsFailure(
     updatedAt: now,
     error: normalized,
   };
-  await saveJson(paths.state, nextState);
+  await saveJsonFile(paths.state, nextState);
   return { channelId: state.channelId, state: nextState, data };
 }
 
@@ -1051,61 +1050,40 @@ function classifyAnalyticsResponseError(
   status: number,
   payload: unknown,
 ): AnalyticsServiceError {
-  const reason = extractApiReason(payload);
-  if (status === 401) {
-    return new AnalyticsServiceError(
-      "Analytics OAuth 凭据无效或已过期，请重新完成授权。",
-      "credential",
-      false,
-    );
-  }
-  if (status === 403 && /quota/i.test(reason ?? "")) {
-    return new AnalyticsServiceError(
-      "Analytics 官方 API 配额不足，请稍后重试或调整配额预算。",
-      "quota",
-      true,
-    );
-  }
-  if (status === 403) {
-    return new AnalyticsServiceError(
-      "当前 OAuth 授权不包含 Analytics 读取权限或频道不具备该资格。",
-      "permission",
-      false,
-    );
-  }
-  if (status === 429) {
-    return new AnalyticsServiceError(
-      "Analytics 请求触发配额限制。",
-      "quota",
-      true,
-    );
-  }
-  if (status >= 500) {
-    return new AnalyticsServiceError(
-      "Analytics 官方 API 暂时不可用。",
-      "network",
-      true,
-    );
-  }
-  return new AnalyticsServiceError(
-    "Analytics 官方 API 请求失败。",
-    "network",
-    false,
-  );
-}
-
-function extractApiReason(payload: unknown): string | undefined {
-  if (
-    !isRecord(payload) ||
-    !isRecord(payload.error) ||
-    !Array.isArray(payload.error.errors)
-  ) {
-    return undefined;
-  }
-  const first = payload.error.errors.find(isRecord);
-  return first === undefined || typeof first.reason !== "string"
-    ? undefined
-    : first.reason;
+  return classifyHttpResponseError(status, payload, {
+    credential: () =>
+      new AnalyticsServiceError(
+        "Analytics OAuth 凭据无效或已过期，请重新完成授权。",
+        "credential",
+        false,
+      ),
+    quota: () =>
+      new AnalyticsServiceError(
+        "Analytics 官方 API 配额不足，请稍后重试或调整配额预算。",
+        "quota",
+        true,
+      ),
+    permission: () =>
+      new AnalyticsServiceError(
+        "当前 OAuth 授权不包含 Analytics 读取权限或频道不具备该资格。",
+        "permission",
+        false,
+      ),
+    rateLimited: () =>
+      new AnalyticsServiceError("Analytics 请求触发配额限制。", "quota", true),
+    serverUnavailable: () =>
+      new AnalyticsServiceError(
+        "Analytics 官方 API 暂时不可用。",
+        "network",
+        true,
+      ),
+    requestFailed: () =>
+      new AnalyticsServiceError(
+        "Analytics 官方 API 请求失败。",
+        "network",
+        false,
+      ),
+  }) as AnalyticsServiceError;
 }
 
 function parseAnalyticsResponse(

@@ -130,7 +130,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<{
         ? "opted-in"
         : "not-configured";
     } catch {
-      analyticsRevenueOptIn = "not-configured";
+      analyticsRevenueOptIn = "invalid-config";
     }
   }
 

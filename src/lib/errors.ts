@@ -150,3 +150,60 @@ export class RetentionServiceError extends KindedServiceError {
     this.name = "RetentionServiceError";
   }
 }
+
+export interface HttpErrorFactories {
+  credential: () => Error;
+  quota: () => Error;
+  permission: () => Error;
+  rateLimited: () => Error;
+  serverUnavailable: () => Error;
+  requestFailed: () => Error;
+}
+
+export function extractApiErrorReason(payload: unknown): string | undefined {
+  const error = payload as { error?: { errors?: unknown[] } } | undefined;
+  if (
+    error === null ||
+    typeof error !== "object" ||
+    typeof error.error !== "object" ||
+    error.error === null ||
+    !Array.isArray(error.error.errors)
+  ) {
+    return undefined;
+  }
+  const first = error.error.errors.find(
+    (entry): entry is { reason?: unknown } =>
+      typeof entry === "object" && entry !== null,
+  );
+  return first !== undefined && typeof first.reason === "string"
+    ? first.reason
+    : undefined;
+}
+
+/**
+ * 官方 HTTP 错误的统一分类阶梯：401 凭据、403 配额/权限、429 限流、5xx 不可用。
+ * 各数据模块用自己的错误工厂保持既有错误类型与文案。
+ */
+export function classifyHttpResponseError(
+  status: number,
+  payload: unknown,
+  factories: HttpErrorFactories,
+): Error {
+  const reason = extractApiErrorReason(payload);
+  if (status === 401) {
+    return factories.credential();
+  }
+  if (status === 403 && /quota/i.test(reason ?? "")) {
+    return factories.quota();
+  }
+  if (status === 403) {
+    return factories.permission();
+  }
+  if (status === 429) {
+    return factories.rateLimited();
+  }
+  if (status >= 500) {
+    return factories.serverUnavailable();
+  }
+  return factories.requestFailed();
+}

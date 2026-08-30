@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { validateChannelOperationsConfig } from "./config.js";
 import {
+  classifyHttpResponseError,
   RETENTION_FAILURE_KINDS,
   type RetentionFailureKind,
   RetentionServiceError,
@@ -233,61 +234,40 @@ function classifyRetentionResponseError(
   status: number,
   payload: unknown,
 ): RetentionServiceError {
-  const reason = extractApiReason(payload);
-  if (status === 401) {
-    return new RetentionServiceError(
-      "留存曲线 OAuth 凭据无效或已过期，请重新完成授权。",
-      "credential",
-      false,
-    );
-  }
-  if (status === 403 && /quota/i.test(reason ?? "")) {
-    return new RetentionServiceError(
-      "Analytics 官方 API 配额不足，请稍后重试或调整配额预算。",
-      "quota",
-      true,
-    );
-  }
-  if (status === 403) {
-    return new RetentionServiceError(
-      "当前 OAuth 授权不包含 Analytics 读取权限或频道不具备该资格。",
-      "permission",
-      false,
-    );
-  }
-  if (status === 429) {
-    return new RetentionServiceError(
-      "Analytics 请求触发配额限制。",
-      "quota",
-      true,
-    );
-  }
-  if (status >= 500) {
-    return new RetentionServiceError(
-      "Analytics 官方 API 暂时不可用。",
-      "network",
-      true,
-    );
-  }
-  return new RetentionServiceError(
-    "Analytics 官方 API 请求失败。",
-    "network",
-    false,
-  );
-}
-
-function extractApiReason(payload: unknown): string | undefined {
-  if (
-    !isRecord(payload) ||
-    !isRecord(payload.error) ||
-    !Array.isArray(payload.error.errors)
-  ) {
-    return undefined;
-  }
-  const first = payload.error.errors.find(isRecord);
-  return first === undefined || typeof first.reason !== "string"
-    ? undefined
-    : first.reason;
+  return classifyHttpResponseError(status, payload, {
+    credential: () =>
+      new RetentionServiceError(
+        "留存曲线 OAuth 凭据无效或已过期，请重新完成授权。",
+        "credential",
+        false,
+      ),
+    quota: () =>
+      new RetentionServiceError(
+        "Analytics 官方 API 配额不足，请稍后重试或调整配额预算。",
+        "quota",
+        true,
+      ),
+    permission: () =>
+      new RetentionServiceError(
+        "当前 OAuth 授权不包含 Analytics 读取权限或频道不具备该资格。",
+        "permission",
+        false,
+      ),
+    rateLimited: () =>
+      new RetentionServiceError("Analytics 请求触发配额限制。", "quota", true),
+    serverUnavailable: () =>
+      new RetentionServiceError(
+        "Analytics 官方 API 暂时不可用。",
+        "network",
+        true,
+      ),
+    requestFailed: () =>
+      new RetentionServiceError(
+        "Analytics 官方 API 请求失败。",
+        "network",
+        false,
+      ),
+  }) as RetentionServiceError;
 }
 
 export type RetentionRunStatus =
@@ -770,7 +750,7 @@ export async function syncRetention(
     defaultData(previousState),
     retentionDataSchema,
   );
-  const state: RetentionSyncState = {
+  let state: RetentionSyncState = {
     ...previousState,
     status: "running",
     startDate: RETENTION_FULL_HISTORY_START_DATE,
@@ -816,7 +796,7 @@ export async function syncRetention(
       fetchQueue.push(videoId);
     }
   }
-  state.pendingVideoIds = fetchQueue;
+  state = { ...state, pendingVideoIds: fetchQueue };
   await saveJsonFile(paths.state, state);
 
   return runRetentionFetch({
@@ -838,7 +818,7 @@ export async function getRetentionStatus(
   channelId: string,
 ): Promise<RetentionSyncResult> {
   const paths = await resolveRetentionPaths(configPath, channelId);
-  const state = await loadJson(
+  let state = await loadJson(
     paths.state,
     defaultState(channelId, new Date().toISOString()),
     retentionStateSchema,
@@ -881,11 +861,7 @@ export interface RetentionReadResult {
 function validateRetentionMaxAge(maxAgeHours: number | undefined): number {
   const value = maxAgeHours ?? 24;
   if (!Number.isFinite(value) || value <= 0 || value > 8_760) {
-    throw new RetentionServiceError(
-      "缓存新鲜度窗口必须在 1 到 8760 小时之间。",
-      "invalid-response",
-      false,
-    );
+    throw new UserInputError("缓存新鲜度窗口必须在 1 到 8760 小时之间。");
   }
   return value;
 }

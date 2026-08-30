@@ -84,7 +84,7 @@ import {
   GoogleReportingProvider,
   listReportingResults,
   readReportingRows,
-  REPORTING_REPORT_TYPES,
+  REGISTERED_REPORTING_REPORT_TYPES,
   syncReporting,
 } from "./lib/reporting.js";
 import {
@@ -183,6 +183,7 @@ function parseInteger(
 
 interface GlobalConfigOverrideOptions {
   dataDirectory?: string;
+  analyticsRevenueOptIn?: string;
   syncFrequencyHours?: string;
   maxConcurrency?: string;
   quotaBudget?: string;
@@ -195,6 +196,7 @@ interface GlobalConfigOverrideOptions {
 interface ChannelConfigOverrideOptions {
   channel?: string;
   channelEnabled?: string;
+  channelAnalyticsRevenueOptIn?: string;
   channelSyncFrequencyHours?: string;
   channelMaxConcurrency?: string;
   channelQuotaBudget?: string;
@@ -312,6 +314,16 @@ function parseGlobalConfigOverrides(
           ),
         }),
     ...(cookieOverrides === undefined ? {} : { cookies: cookieOverrides }),
+    ...(options.analyticsRevenueOptIn === undefined
+      ? {}
+      : {
+          analytics: {
+            revenueOptIn: parseBoolean(
+              options.analyticsRevenueOptIn,
+              "--analytics-revenue-opt-in",
+            ),
+          },
+        }),
   };
 }
 
@@ -506,6 +518,7 @@ function parseChannelConfigOverrides(
     options.channelMaxConcurrency !== undefined ||
     options.channelQuotaBudget !== undefined ||
     options.channelInitialBackfillDays !== undefined ||
+    options.channelAnalyticsRevenueOptIn !== undefined ||
     options.channelRawEvidenceRetentionDays !== undefined;
 
   if (options.channel === undefined) {
@@ -568,6 +581,16 @@ function parseChannelConfigOverrides(
           enabled: parseBoolean(options.channelEnabled, "--channel-enabled"),
         }),
     ...(Object.keys(sync).length === 0 ? {} : { sync }),
+    ...(options.channelAnalyticsRevenueOptIn === undefined
+      ? {}
+      : {
+          analytics: {
+            revenueOptIn: parseBoolean(
+              options.channelAnalyticsRevenueOptIn,
+              "--channel-analytics-revenue-opt-in",
+            ),
+          },
+        }),
     ...(options.channelRawEvidenceRetentionDays === undefined
       ? {}
       : {
@@ -796,6 +819,10 @@ function addGlobalConfigOverrideOptions(command: Command): Command {
       "--cookies-from-browser <spec>",
       "更新浏览器 cookie 来源；传空字符串清除",
     )
+    .option(
+      "--analytics-revenue-opt-in <true|false>",
+      "显式开启货币分析能力；默认关闭",
+    )
     .option("--raw-evidence-retention-days <days>", "更新原始证据保留天数");
 }
 
@@ -807,6 +834,10 @@ function addChannelConfigOverrideOptions(command: Command): Command {
     .option("--channel-max-concurrency <count>", "更新频道同步最大并发数")
     .option("--channel-quota-budget <units>", "更新频道同步配额预算")
     .option("--channel-initial-backfill-days <days>", "更新频道首次回填天数")
+    .option(
+      "--channel-analytics-revenue-opt-in <true|false>",
+      "覆盖该频道的货币分析能力开关",
+    )
     .option(
       "--channel-raw-evidence-retention-days <days>",
       "更新频道原始证据保留天数",
@@ -1608,7 +1639,7 @@ channelOperations
   .requiredOption("--channel <channel-id>", "目标频道 ID")
   .requiredOption(
     "--report-type <type>",
-    `官方报告类型；已登记 reach 报表 ${REPORTING_REPORT_TYPES[0]}`,
+    `官方报告类型；已登记 reach 报表 ${REGISTERED_REPORTING_REPORT_TYPES[0]}`,
   )
   .option("--report-id <id>", "继续指定的报告 ID")
   .action(
@@ -1671,7 +1702,7 @@ channelOperations
   .requiredOption("--channel <channel-id>", "目标频道 ID")
   .requiredOption(
     "--report-type <type>",
-    `官方报告类型；已登记 reach 报表 ${REPORTING_REPORT_TYPES[0]}`,
+    `官方报告类型；已登记 reach 报表 ${REGISTERED_REPORTING_REPORT_TYPES[0]}`,
   )
   .option("--video <video-id>", "只读取指定视频的行")
   .action(
