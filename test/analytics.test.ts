@@ -13,6 +13,7 @@ import { initializeChannelOperationsConfig } from "../src/lib/config.js";
 import { updateGlobalChannelOperationsConfig } from "../src/lib/config.js";
 import {
   CORE_ANALYTICS_METRICS,
+  deriveAnalyticsFacts,
   type AnalyticsProvider,
   type AnalyticsProviderResult,
   type AnalyticsQuery,
@@ -643,6 +644,31 @@ describe("频道核心 Analytics", () => {
       expect(provider.queries[2].currency).toBeUndefined();
       expect(result.data.channelRows[0].metrics.estimatedRevenue).toBe(0.02);
     });
+  });
+
+  it("RPM 与赞踩比仅在读取时派生，缺输入的行省略派生值", () => {
+    const derived = deriveAnalyticsFacts([
+      {
+        dimensions: { day: "2026-08-19" },
+        metrics: {
+          estimatedRevenue: 2,
+          engagedViews: 500,
+          likes: 30,
+          dislikes: 10,
+        },
+      },
+      {
+        dimensions: { day: "2026-08-18" },
+        metrics: { estimatedRevenue: 5, engagedViews: 0 },
+      },
+      { dimensions: { day: "2026-08-17" }, metrics: { views: 100 } },
+    ]);
+    expect(derived[0].derived).toEqual({
+      rpmPerThousandEngagedViews: 4,
+      likeToDislikeRatio: 3,
+    });
+    expect(derived[1].derived).toEqual({});
+    expect(derived[2].derived).toEqual({});
   });
 
   it("画像阶段从组检查点恢复且不重复核心阶段", async () => {

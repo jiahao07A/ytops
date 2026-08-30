@@ -65,6 +65,7 @@ import {
   syncInventory,
 } from "./lib/inventory.js";
 import {
+  deriveAnalyticsFacts,
   getAnalyticsStatus,
   GoogleAnalyticsProvider,
   queryAnalytics,
@@ -1446,6 +1447,7 @@ channelOperations
   .option("--refresh", "先尝试刷新；失败时返回最后可用数据并标记过期")
   .option("--latest", "要求本次刷新成功；失败时不回退到旧数据")
   .option("--max-age-hours <hours>", "判定缓存过期的小时数，默认 24")
+  .option("--derived", "读取时派生 RPM 与赞踩比；不写入本机仓库")
   .action(
     async (options: {
       config: string;
@@ -1453,6 +1455,7 @@ channelOperations
       refresh?: boolean;
       latest?: boolean;
       maxAgeHours?: string;
+      derived?: boolean;
     }) => {
       if (options.refresh && options.latest) {
         throw new UserInputError("--refresh 与 --latest 只能选择一个。 ");
@@ -1462,8 +1465,8 @@ channelOperations
         : options.refresh
           ? "refresh"
           : "cached";
-      return execute("频道 Analytics 新鲜度查询", () =>
-        readAnalyticsFacts(
+      return execute("频道 Analytics 新鲜度查询", async () => {
+        const result = await readAnalyticsFacts(
           options.config,
           {
             channelId: options.channel,
@@ -1475,8 +1478,17 @@ channelOperations
                 }),
           },
           {},
-        ),
-      );
+        );
+        return options.derived
+          ? {
+              ...result,
+              data: {
+                ...result.data,
+                derivedRows: deriveAnalyticsFacts(result.data.channelRows),
+              },
+            }
+          : result;
+      });
     },
   );
 

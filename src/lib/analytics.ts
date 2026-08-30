@@ -595,6 +595,44 @@ export async function queryAnalytics(
   return getAnalyticsStatus(configPath, channelId);
 }
 
+export interface DerivedAnalyticsRow {
+  dimensions: Record<string, string>;
+  metrics: Record<string, number>;
+  derived: {
+    rpmPerThousandEngagedViews?: number;
+    likeToDislikeRatio?: number;
+  };
+}
+
+/**
+ * 读取时派生指标（ADR 0002）：仓库只存原始量，RPM 与赞踩比不落盘；
+ * 分母缺失或为零时省略派生值，绝不把缺失伪装成零。
+ */
+export function deriveAnalyticsFacts(
+  rows: AnalyticsRow[],
+): DerivedAnalyticsRow[] {
+  return rows.map((row) => {
+    const derived: DerivedAnalyticsRow["derived"] = {};
+    const { estimatedRevenue, engagedViews, likes, dislikes } = row.metrics;
+    if (
+      typeof estimatedRevenue === "number" &&
+      typeof engagedViews === "number" &&
+      engagedViews > 0
+    ) {
+      derived.rpmPerThousandEngagedViews =
+        (estimatedRevenue / engagedViews) * 1000;
+    }
+    if (
+      typeof likes === "number" &&
+      typeof dislikes === "number" &&
+      dislikes > 0
+    ) {
+      derived.likeToDislikeRatio = likes / dislikes;
+    }
+    return { dimensions: row.dimensions, metrics: row.metrics, derived };
+  });
+}
+
 export async function syncAnalytics(
   configPath: string,
   input: {
