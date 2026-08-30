@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeChannelOperationsConfig } from "../src/lib/config.js";
+import { updateGlobalChannelOperationsConfig } from "../src/lib/config.js";
 import {
   CORE_ANALYTICS_METRICS,
   type AnalyticsProvider,
@@ -534,6 +535,113 @@ describe("频道核心 Analytics", () => {
           (row) => row.dimensions.trafficSourceType === "REFERRAL",
         ),
       ).toBe(false);
+    });
+  });
+
+  it("未开启货币 opt-in 时同步不携带收入指标与币种，显式请求被本地拒绝", async () => {
+    await withAnalyticsFixture(async ({ configPath, store }) => {
+      const provider = new FakeAnalyticsProvider([
+        {
+          rows: [{ dimensions: { day: "2026-08-19" }, metrics: { views: 7 } }],
+          raw: { source: "channel" },
+          coverage: "complete",
+        },
+        {
+          rows: [{ dimensions: { video: "video-001" }, metrics: { views: 3 } }],
+          raw: { source: "video" },
+          coverage: "complete",
+        },
+        { rows: [], raw: { source: "audience-traffic" }, coverage: "complete" },
+        { rows: [], raw: { source: "audience-country" }, coverage: "complete" },
+        { rows: [], raw: { source: "audience-demo" }, coverage: "complete" },
+        {
+          rows: [],
+          raw: { source: "audience-subscribed" },
+          coverage: "complete",
+        },
+      ]);
+      const result = await syncAnalytics(
+        configPath,
+        { channelId, videoIds: ["video-001"] },
+        {
+          provider,
+          credentialStore: store,
+          now: () => new Date("2026-08-19T12:00:00.000Z"),
+        },
+      );
+      expect(result.state.revenueOptIn).toBe(false);
+      for (const query of [...provider.queries.slice(0, 2)]) {
+        expect(query.metrics).not.toContain("estimatedRevenue");
+        expect(query.currency).toBeUndefined();
+      }
+
+      const rejectedProvider = new FakeAnalyticsProvider([]);
+      await expect(
+        syncAnalytics(
+          configPath,
+          {
+            channelId,
+            metrics: ["estimatedRevenue" as never],
+          },
+          { provider: rejectedProvider, credentialStore: store },
+        ),
+      ).rejects.toThrow("核心指标目录");
+      expect(rejectedProvider.queries).toHaveLength(0);
+    });
+  });
+
+  it("开启货币 opt-in 后核心同步携带收入指标并显式 USD，画像组不受影响", async () => {
+    await withAnalyticsFixture(async ({ configPath, store }) => {
+      await updateGlobalChannelOperationsConfig(configPath, {
+        analytics: { revenueOptIn: true },
+      });
+      const provider = new FakeAnalyticsProvider([
+        {
+          rows: [
+            {
+              dimensions: { day: "2026-08-19" },
+              metrics: { views: 7, estimatedRevenue: 0.02 },
+            },
+          ],
+          raw: { source: "channel" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: { video: "video-001" },
+              metrics: { views: 3, estimatedRevenue: 0.01 },
+            },
+          ],
+          raw: { source: "video" },
+          coverage: "complete",
+        },
+        { rows: [], raw: { source: "audience-traffic" }, coverage: "complete" },
+        { rows: [], raw: { source: "audience-country" }, coverage: "complete" },
+        { rows: [], raw: { source: "audience-demo" }, coverage: "complete" },
+        {
+          rows: [],
+          raw: { source: "audience-subscribed" },
+          coverage: "complete",
+        },
+      ]);
+      const result = await syncAnalytics(
+        configPath,
+        { channelId, videoIds: ["video-001"] },
+        {
+          provider,
+          credentialStore: store,
+          now: () => new Date("2026-08-19T12:00:00.000Z"),
+        },
+      );
+      expect(result.state.revenueOptIn).toBe(true);
+      expect(provider.queries[0].metrics).toContain("estimatedRevenue");
+      expect(provider.queries[0].currency).toBe("USD");
+      expect(provider.queries[1].metrics).toContain("estimatedRevenue");
+      expect(provider.queries[1].currency).toBe("USD");
+      expect(provider.queries[2].metrics).not.toContain("estimatedRevenue");
+      expect(provider.queries[2].currency).toBeUndefined();
+      expect(result.data.channelRows[0].metrics.estimatedRevenue).toBe(0.02);
     });
   });
 

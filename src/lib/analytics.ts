@@ -4,10 +4,15 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import {
   CORE_ANALYTICS_METRICS,
+  REVENUE_ESTIMATE_METRIC,
   type AnalyticsDimension,
   type AnalyticsMetric,
 } from "./analytics-catalog.js";
-import { validateChannelOperationsConfig } from "./config.js";
+import {
+  resolveRevenueOptIn,
+  validateChannelOperationsConfig,
+  type ChannelOperationsConfig,
+} from "./config.js";
 import { AnalyticsServiceError, UserInputError } from "./errors.js";
 import { getInventoryStatus } from "./inventory.js";
 import {
@@ -56,6 +61,7 @@ export interface AnalyticsQuery {
   metrics: AnalyticsMetric[];
   dimensions: AnalyticsDimension[];
   filters?: Record<string, string>;
+  currency?: string;
   startIndex?: number;
   maxResults?: number;
 }
@@ -121,6 +127,9 @@ export class GoogleAnalyticsProvider implements AnalyticsProvider {
         params.set("filters", filters);
       }
     }
+    if (input.currency !== undefined) {
+      params.set("currency", input.currency);
+    }
     url.search = params.toString();
 
     let response: Response;
@@ -168,6 +177,7 @@ export interface AnalyticsSyncState {
   };
   coverage: AnalyticsCoverageStatus;
   audienceCoverage?: AnalyticsCoverageStatus;
+  revenueOptIn?: boolean;
   updatedAt: string;
   startedAt?: string;
   lastSuccessAt?: string;
@@ -208,6 +218,7 @@ interface AnalyticsPaths {
   state: string;
   data: string;
   evidence: string;
+  config: ChannelOperationsConfig;
 }
 
 const rowSchema = z
@@ -235,6 +246,7 @@ const evidenceSchema = z
         metrics: z.array(z.string().min(1)),
         dimensions: z.array(z.string().min(1)),
         filters: z.record(z.string(), z.string()).optional(),
+        currency: z.string().min(1).optional(),
         startIndex: legacyStartIndexSchema.optional(),
         maxResults: z.number().int().positive().optional(),
       })
@@ -295,6 +307,7 @@ const analyticsStateSchema = z
         "delayed",
       ])
       .optional(),
+    revenueOptIn: z.boolean().optional(),
     updatedAt: z.string().min(1),
     startedAt: z.string().min(1).optional(),
     lastSuccessAt: z.string().min(1).optional(),
@@ -451,6 +464,7 @@ async function resolveAnalyticsPaths(
     state: resolve(root, "sync-state.json"),
     data: resolve(root, "data.json"),
     evidence: resolve(root, "evidence"),
+    config: validated.config,
   };
 }
 
@@ -606,6 +620,12 @@ export async function syncAnalytics(
     throw new UserInputError("Analytics 指标必须来自首期支持的核心指标目录。");
   }
   const paths = await resolveAnalyticsPaths(configPath, input.channelId);
+  const revenueOptIn = resolveRevenueOptIn(paths.config, input.channelId);
+  // 货币 opt-in 开启时，核心两阶段自动携带收入指标并以显式 USD 请求；
+  // 观众画像组不携带收入，避免把估算值混入结构口径（ADR 0003）。
+  const syncMetrics: AnalyticsMetric[] = revenueOptIn
+    ? [...metrics, REVENUE_ESTIMATE_METRIC]
+    : metrics;
   const now = nowFactory().toISOString();
   const previousState = await loadJson(
     paths.state,
@@ -642,6 +662,7 @@ export async function syncAnalytics(
       ),
       status: "running",
       startedAt: now,
+      revenueOptIn,
       ...(previousState.lastSuccessAt === undefined
         ? {}
         : { lastSuccessAt: previousState.lastSuccessAt }),
@@ -656,6 +677,7 @@ export async function syncAnalytics(
       status: "running",
       updatedAt: now,
       error: undefined,
+      revenueOptIn,
     };
   }
   await saveJson(paths.state, state);
@@ -690,8 +712,9 @@ export async function syncAnalytics(
         channelId: access.channelId,
         startDate: state.startDate,
         endDate: state.endDate,
-        metrics,
+        metrics: syncMetrics,
         dimensions: ["day"],
+        ...(revenueOptIn ? { currency: "USD" } : {}),
         startIndex: state.checkpoint.channelStartIndex,
         maxResults: ANALYTICS_PAGE_SIZE,
       };
@@ -749,8 +772,9 @@ export async function syncAnalytics(
         channelId: access.channelId,
         startDate: state.startDate,
         endDate: state.endDate,
-        metrics,
+        metrics: syncMetrics,
         dimensions: ["video"],
+        ...(revenueOptIn ? { currency: "USD" } : {}),
         ...(videoIds.length === 0
           ? {}
           : { filters: { video: videoIds.join(",") } }),
