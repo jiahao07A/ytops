@@ -7,6 +7,7 @@ import {
 } from "./config.js";
 import { getInventoryStatus } from "./inventory.js";
 import { getChannelConnectionStatus } from "./oauth.js";
+import { getRetentionStatus } from "./retention.js";
 import { getReportingStatus } from "./reporting.js";
 
 export type CoverageMatrixStatus =
@@ -48,14 +49,16 @@ export async function getCoverageMatrix(
   );
   const inventoryConnection =
     inventoryConnections.length === 1 ? inventoryConnections[0] : undefined;
-  const [inventory, analytics, reporting, comments] = await Promise.all([
-    inventoryConnection === undefined
-      ? Promise.resolve(undefined)
-      : getInventoryStatus(configPath, channelId),
-    getAnalyticsStatus(configPath, channelId),
-    getReportingStatus(configPath, channelId),
-    getCommentsStatus(configPath, channelId),
-  ]);
+  const [inventory, analytics, reporting, comments, retention] =
+    await Promise.all([
+      inventoryConnection === undefined
+        ? Promise.resolve(undefined)
+        : getInventoryStatus(configPath, channelId),
+      getAnalyticsStatus(configPath, channelId),
+      getReportingStatus(configPath, channelId),
+      getCommentsStatus(configPath, channelId),
+      getRetentionStatus(configPath, channelId),
+    ]);
   const validated = await validateChannelOperationsConfig(configPath);
   const dataDirectory = resolve(
     dirname(validated.configPath),
@@ -131,6 +134,15 @@ export async function getCoverageMatrix(
           comments.state.coverage === "complete"
         ? "supported"
         : comments.state.status === "completed"
+          ? "partial"
+          : "unavailable";
+  const retentionStatus: CoverageMatrixStatus =
+    retention.state.coverage === "permission-denied"
+      ? "qualification-limited"
+      : retention.state.coverage === "complete" &&
+          retention.state.status === "completed"
+        ? "supported"
+        : retention.state.status === "completed"
           ? "partial"
           : "unavailable";
 
@@ -222,6 +234,21 @@ export async function getCoverageMatrix(
           : { reason: comments.state.error.message }),
         evidencePaths: safeEvidencePaths(
           comments.data.evidence.map((evidence) => evidence.path),
+        ),
+      },
+      {
+        capability: "retention.curve",
+        source: retention.data.source,
+        status: retentionStatus,
+        scope: "单个视频的全历史留存曲线（官方固定约 100 个进度比例点）",
+        ...(retention.data.dataAsOf === undefined
+          ? {}
+          : { dataAsOf: retention.data.dataAsOf }),
+        ...(retention.state.error === undefined
+          ? {}
+          : { reason: retention.state.error.message }),
+        evidencePaths: safeEvidencePaths(
+          retention.data.curves.map((curve) => curve.evidencePath),
         ),
       },
     ],

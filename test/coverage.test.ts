@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  rm,
+  rmdir,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -40,11 +47,58 @@ async function writeConnections(
   return statePath;
 }
 
+async function writeRetentionFixture(
+  root: string,
+  state: Record<string, unknown>,
+): Promise<void> {
+  const retentionDirectory = join(
+    root,
+    ".ytops-data",
+    "retention",
+    channelId,
+    "evidence",
+  );
+  await mkdir(retentionDirectory, { recursive: true });
+  await writeFile(
+    join(root, ".ytops-data", "retention", channelId, "sync-state.json"),
+    `${JSON.stringify(state)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(root, ".ytops-data", "retention", channelId, "data.json"),
+    `${JSON.stringify({
+      version: 1,
+      channelId,
+      source: "youtube-analytics-api",
+      startDate: "2005-07-14",
+      endDate: "2026-08-19",
+      curves: [
+        {
+          videoId: "video-001",
+          points: [{ elapsedVideoTimeRatio: 0.01, audienceWatchRatio: 1.18 }],
+          fetchedAt: "2026-08-19T00:00:00.000Z",
+          evidencePath: join(retentionDirectory, "evidence-video-001.json"),
+          coverage: "complete",
+          dataAsOf: "2026-08-19T00:00:00.000Z",
+        },
+      ],
+      coverage: "complete",
+      dataAsOf: "2026-08-19T00:00:00.000Z",
+      updatedAt: "2026-08-19T01:00:00.000Z",
+    })}\n`,
+    "utf8",
+  );
+}
+
 async function cleanupFixture(root: string, configPath: string): Promise<void> {
   await unlink(join(root, ".ytops-data", "oauth", "connections.json")).catch(
     () => undefined,
   );
   await rmdir(join(root, ".ytops-data", "oauth")).catch(() => undefined);
+  await rm(join(root, ".ytops-data", "retention"), {
+    recursive: true,
+    force: true,
+  }).catch(() => undefined);
   await rmdir(join(root, ".ytops-data")).catch(() => undefined);
   await unlink(configPath).catch(() => undefined);
   await rmdir(root).catch(() => undefined);
@@ -75,6 +129,11 @@ describe("覆盖矩阵与证据审计", () => {
           expect.objectContaining({
             capability: "comments.readonly",
             status: "unavailable",
+          }),
+          expect.objectContaining({
+            capability: "retention.curve",
+            status: "unavailable",
+            evidencePaths: [],
           }),
         ]),
       );
@@ -233,6 +292,76 @@ describe("覆盖矩阵与证据审计", () => {
           }),
         ]),
       );
+    } finally {
+      await cleanupFixture(root, configPath);
+    }
+  });
+
+  it("留存曲线能力条目按同步状态映射，证据路径经凭据样文本过滤", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-coverage-"));
+    const configPath = join(root, "config.json");
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      await writeRetentionFixture(root, {
+        version: 1,
+        channelId,
+        status: "completed",
+        startDate: "2005-07-14",
+        endDate: "2026-08-19",
+        completedVideoIds: ["video-001"],
+        pendingVideoIds: [],
+        progress: { videos: 1, points: 1 },
+        coverage: "complete",
+        updatedAt: "2026-08-19T01:00:00.000Z",
+        lastSuccessAt: "2026-08-19T01:00:00.000Z",
+        dataAsOf: "2026-08-19T00:00:00.000Z",
+      });
+
+      const matrix = await getCoverageMatrix(configPath, channelId);
+      const retention = matrix.entries.find(
+        (entry) => entry.capability === "retention.curve",
+      );
+      expect(retention).toMatchObject({
+        status: "supported",
+        source: "youtube-analytics-api",
+        dataAsOf: "2026-08-19T00:00:00.000Z",
+        evidencePaths: [
+          join(
+            root,
+            ".ytops-data",
+            "retention",
+            channelId,
+            "evidence",
+            "evidence-video-001.json",
+          ),
+        ],
+      });
+      expect(JSON.stringify(matrix)).not.toContain("access-token");
+
+      await writeRetentionFixture(root, {
+        version: 1,
+        channelId,
+        status: "failed",
+        startDate: "2005-07-14",
+        endDate: "2026-08-19",
+        completedVideoIds: [],
+        pendingVideoIds: ["video-001"],
+        progress: { videos: 0, points: 0 },
+        coverage: "permission-denied",
+        updatedAt: "2026-08-19T01:00:00.000Z",
+        error: {
+          kind: "permission",
+          message: "当前授权不包含 Analytics 读取权限。",
+          retryable: false,
+        },
+      });
+      const limited = await getCoverageMatrix(configPath, channelId);
+      expect(
+        limited.entries.find((entry) => entry.capability === "retention.curve"),
+      ).toMatchObject({
+        status: "qualification-limited",
+        reason: "当前授权不包含 Analytics 读取权限。",
+      });
     } finally {
       await cleanupFixture(root, configPath);
     }
