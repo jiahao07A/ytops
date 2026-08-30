@@ -2,6 +2,11 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
+import {
+  CORE_ANALYTICS_METRICS,
+  type AnalyticsDimension,
+  type AnalyticsMetric,
+} from "./analytics-catalog.js";
 import { validateChannelOperationsConfig } from "./config.js";
 import { AnalyticsServiceError, UserInputError } from "./errors.js";
 import { getInventoryStatus } from "./inventory.js";
@@ -10,29 +15,12 @@ import {
   type OAuthWorkflowDependencies,
 } from "./oauth.js";
 
+export { CORE_ANALYTICS_METRICS } from "./analytics-catalog.js";
+export type { AnalyticsDimension, AnalyticsMetric } from "./analytics-catalog.js";
+
 export const DEFAULT_ANALYTICS_BACKFILL_DAYS = 365;
 export const MAX_ANALYTICS_BACKFILL_DAYS = 3_650;
 export const ANALYTICS_PAGE_SIZE = 200;
-
-export const CORE_ANALYTICS_METRICS = [
-  "views",
-  "estimatedMinutesWatched",
-  "averageViewDuration",
-  "likes",
-  "comments",
-  "shares",
-] as const;
-
-export type AnalyticsMetric =
-  (typeof CORE_ANALYTICS_METRICS)[number] | "estimatedRevenue";
-export type AnalyticsDimension =
-  | "day"
-  | "video"
-  | "trafficSourceType"
-  | "deviceType"
-  | "country"
-  | "ageGroup"
-  | "gender";
 export type AnalyticsPhase = "channel" | "video" | "complete";
 export type AnalyticsRunStatus =
   "not-started" | "running" | "partial" | "completed" | "failed";

@@ -13,6 +13,11 @@ import { tmpdir } from "node:os";
 import isoCountries from "i18n-iso-countries";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
+import {
+  CORE_ANALYTICS_METRICS,
+  REVENUE_ESTIMATE_METRIC,
+  SUPPORTED_ANALYSIS_DIMENSIONS,
+} from "./analytics-catalog.js";
 import { UserInputError } from "./errors.js";
 
 const protectedCredentialKeyFragments = [
@@ -47,23 +52,10 @@ const credentialValuePatterns = [
 const youtubeChannelIdPattern = /^UC[A-Za-z0-9_-]{22}$/;
 const youtubeVideoIdPattern = /^[A-Za-z0-9_-]{11}$/;
 const supportedAnalysisMetrics = new Set([
-  "views",
-  "estimatedMinutesWatched",
-  "averageViewDuration",
-  "likes",
-  "comments",
-  "shares",
-  "estimatedRevenue",
+  ...CORE_ANALYTICS_METRICS,
+  REVENUE_ESTIMATE_METRIC,
 ]);
-const supportedAnalysisDimensions = new Set([
-  "day",
-  "video",
-  "trafficSourceType",
-  "deviceType",
-  "country",
-  "ageGroup",
-  "gender",
-]);
+const supportedAnalysisDimensions = new Set(SUPPORTED_ANALYSIS_DIMENSIONS);
 const supportedAnalysisDateRanges = new Set([
   "last-7-days",
   "last-28-days",

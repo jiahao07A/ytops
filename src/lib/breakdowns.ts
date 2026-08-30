@@ -5,11 +5,14 @@ import { z } from "zod";
 import {
   CORE_ANALYTICS_METRICS,
   type AnalyticsCoverageStatus,
-  type AnalyticsDimension,
   type AnalyticsMetric,
   type AnalyticsProvider,
   type AnalyticsRow,
 } from "./analytics.js";
+import {
+  REVENUE_ESTIMATE_METRIC,
+  SUPPORTED_ANALYSIS_DIMENSIONS,
+} from "./analytics-catalog.js";
 import {
   validateChannelOperationsConfig,
   updateAnalysisProfileOperationsConfig,
@@ -22,17 +25,9 @@ import {
 
 export const BREAKDOWN_METRICS = [
   ...CORE_ANALYTICS_METRICS,
-  "estimatedRevenue",
+  REVENUE_ESTIMATE_METRIC,
 ] as const;
-export const BREAKDOWN_DIMENSIONS = [
-  "day",
-  "video",
-  "trafficSourceType",
-  "deviceType",
-  "country",
-  "ageGroup",
-  "gender",
-] as const;
+export const BREAKDOWN_DIMENSIONS = SUPPORTED_ANALYSIS_DIMENSIONS;
 
 export type BreakdownMetric = (typeof BREAKDOWN_METRICS)[number];
 export type BreakdownDimension = (typeof BREAKDOWN_DIMENSIONS)[number];
