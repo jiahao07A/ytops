@@ -84,7 +84,7 @@ import {
   GoogleReportingProvider,
   listReportingResults,
   readReportingRows,
-  REGISTERED_REPORTING_REPORT_TYPES,
+  REACH_REPORT_TYPE,
   syncReporting,
 } from "./lib/reporting.js";
 import {
@@ -1639,7 +1639,7 @@ channelOperations
   .requiredOption("--channel <channel-id>", "目标频道 ID")
   .requiredOption(
     "--report-type <type>",
-    `官方报告类型；已登记 reach 报表 ${REGISTERED_REPORTING_REPORT_TYPES[0]}`,
+    `官方报告类型；已登记 reach 报表 ${REACH_REPORT_TYPE}`,
   )
   .option("--report-id <id>", "继续指定的报告 ID")
   .action(
@@ -1702,7 +1702,7 @@ channelOperations
   .requiredOption("--channel <channel-id>", "目标频道 ID")
   .requiredOption(
     "--report-type <type>",
-    `官方报告类型；已登记 reach 报表 ${REGISTERED_REPORTING_REPORT_TYPES[0]}`,
+    `官方报告类型；已登记 reach 报表 ${REACH_REPORT_TYPE}`,
   )
   .option("--video <video-id>", "只读取指定视频的行")
   .action(

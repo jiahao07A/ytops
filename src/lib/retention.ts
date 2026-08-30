@@ -1034,7 +1034,9 @@ export async function readRetentionCurve(
   const curve = run.data.curves.find(
     (candidate) => candidate.videoId === videoId,
   );
-  if (curve !== undefined && curve !== previousCurve && isUsableCurve(curve)) {
+  // 对象引用不等 = 本次刷新确实替换了已存的曲线（替换式合并语义）。
+  const replacedCurve = curve !== undefined && curve !== previousCurve;
+  if (replacedCurve && isUsableCurve(curve)) {
     return assembleReadResult(
       input.channelId,
       videoId,

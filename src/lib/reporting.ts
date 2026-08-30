@@ -15,6 +15,7 @@ import { validateChannelOperationsConfig } from "./config.js";
 import { ReportingServiceError, UserInputError } from "./errors.js";
 import {
   isFsCode,
+  type LoadJsonFileErrors,
   isRecord,
   loadValidatedJsonFile,
   saveJsonFile,
@@ -342,9 +343,7 @@ const REPORT_TYPE_PATTERN = /^[A-Za-z0-9_-]+$/;
  * 官方报表版本号（a1/a3）会随时间演进，reportTypes.list 的实时返回
  * 才是权威来源，白名单会在官方升版时把仍可用的报表拒之门外。
  */
-export const REGISTERED_REPORTING_REPORT_TYPES = [
-  "channel_reach_basic_a1",
-] as const;
+export const REACH_REPORT_TYPE = ["channel_reach_basic_a1"] as const;
 
 /** reach 基础报表族：官方列语义按族判断，版本号演进不改变列名。 */
 const REACH_BASIC_REPORT_TYPE_PATTERN = /^channel_reach_basic_/;
@@ -430,20 +429,38 @@ async function migrateLegacyReportingSlot(channelRoot: string): Promise<void> {
 }
 
 /** 迁移期读取旧文件：ENOENT 返回 undefined，损坏内容沿用既有读取错误语义。 */
+function legacyJsonErrors(): LoadJsonFileErrors {
+  return {
+    corrupt: () =>
+      new ReportingServiceError(
+        "Reporting 本机状态格式无效。",
+        "invalid-response",
+        false,
+      ),
+    unreadable: () =>
+      new ReportingServiceError(
+        "无法读取 Reporting 本机状态。",
+        "network",
+        true,
+      ),
+  };
+}
+
 async function loadLegacyJson<T>(
   path: string,
   schema: z.ZodType<T>,
 ): Promise<T> {
-  const parsed = await readLegacyJsonFile(path);
-  const result = schema.safeParse(parsed);
-  if (!result.success) {
-    throw new ReportingServiceError(
-      "Reporting 本机状态格式无效。",
-      "invalid-response",
-      false,
-    );
+  const loaded = await loadValidatedJsonFile<T | undefined>(
+    path,
+    undefined,
+    schema,
+    legacyJsonErrors(),
+  );
+  if (loaded === undefined) {
+    // 与共享原语的 ENOENT→fallback 契约对齐：迁移路径把缺失视为不可达。
+    throw legacyJsonErrors().unreadable();
   }
-  return result.data;
+  return loaded;
 }
 
 async function tryLoadLegacyJson<T>(
@@ -454,21 +471,6 @@ async function tryLoadLegacyJson<T>(
     return await loadLegacyJson(path, schema);
   } catch {
     return undefined;
-  }
-}
-
-async function readLegacyJsonFile(path: string): Promise<unknown> {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    if (isFsCode(error, "ENOENT")) {
-      return undefined;
-    }
-    throw new ReportingServiceError(
-      "无法读取 Reporting 本机状态。",
-      "network",
-      true,
-    );
   }
 }
 

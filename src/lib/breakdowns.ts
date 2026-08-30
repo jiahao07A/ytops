@@ -305,6 +305,7 @@ export async function queryBreakdown(
       rows: [],
     };
   }
+  let revenueCurrency: string | undefined;
   if (query.metrics.includes(REVENUE_ESTIMATE_METRIC)) {
     const { config } = await validateChannelOperationsConfig(configPath);
     if (!resolveRevenueOptIn(config, input.channelId)) {
@@ -319,6 +320,7 @@ export async function queryBreakdown(
         rows: [],
       };
     }
+    revenueCurrency = "USD";
   }
   const paths = await resolvePaths(configPath, input.channelId, query);
   try {
@@ -343,6 +345,7 @@ export async function queryBreakdown(
       metrics: query.metrics,
       dimensions: query.dimensions,
       filters: query.filters,
+      ...(revenueCurrency === undefined ? {} : { currency: revenueCurrency }),
     });
     const fetchedAt = now.toISOString();
     const evidencePath = resolve(

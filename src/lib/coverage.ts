@@ -183,11 +183,13 @@ export async function getCoverageMatrix(
         : retention.state.status === "completed"
           ? "partial"
           : "unavailable";
+  const revenueRowsPresent = [
+    ...analytics.data.channelRows,
+    ...analytics.data.videoRows,
+  ].some((row) => "estimatedRevenue" in row.metrics);
   const revenueStatus: CoverageMatrixStatus = !analytics.state.revenueOptIn
     ? "qualification-limited"
-    : analytics.data.channelRows.some(
-          (row) => "estimatedRevenue" in row.metrics,
-        )
+    : revenueRowsPresent
       ? "estimated"
       : "unavailable";
 

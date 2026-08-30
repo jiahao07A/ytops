@@ -604,7 +604,7 @@ export function explainChannelOperationsConfig(): {
           description:
             "显式开启货币分析能力（总收入、RPM）。默认关闭；开启后下次授权才会申请货币只读 scope。",
           rule: "必须是 true 或 false；默认值为 false；频道级覆盖优先于全局值。",
-          temporaryCommand: `${validateConfig} --channel <channel-id>`,
+          temporaryCommand: `${validateConfig} --analytics-revenue-opt-in <true|false>`,
           persistentCommand: `${setGlobalConfig} --analytics-revenue-opt-in <true|false>`,
         },
         {
