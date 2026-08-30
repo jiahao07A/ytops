@@ -70,6 +70,16 @@ type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const REPORTS_ENDPOINT = "https://youtubeanalytics.googleapis.com/v2/reports";
 
+// 内部维度目录使用面向配置的名称；官方 API 的流量来源维度/筛选名为
+// insightTrafficSourceType，其余维度名与官方一致。
+const OFFICIAL_DIMENSION_NAMES: Record<string, string> = {
+  trafficSourceType: "insightTrafficSourceType",
+};
+
+function toOfficialAnalyticsName(name: string): string {
+  return OFFICIAL_DIMENSION_NAMES[name] ?? name;
+}
+
 export class GoogleAnalyticsProvider implements AnalyticsProvider {
   constructor(
     private readonly fetcher: Fetcher = globalThis.fetch.bind(globalThis),
@@ -88,12 +98,15 @@ export class GoogleAnalyticsProvider implements AnalyticsProvider {
       startDate: input.startDate,
       endDate: input.endDate,
       metrics: input.metrics.join(","),
-      dimensions: input.dimensions.join(","),
+      dimensions: input.dimensions
+        .map(toOfficialAnalyticsName)
+        .join(","),
       maxResults: String(input.maxResults ?? ANALYTICS_PAGE_SIZE),
       startIndex: String(startIndex),
     });
     if (input.filters !== undefined) {
       const filters = Object.entries(input.filters)
+        .map(([key, value]) => [toOfficialAnalyticsName(key), value])
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, value]) => `${key}==${value}`)
         .join(";");

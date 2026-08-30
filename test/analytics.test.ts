@@ -371,6 +371,37 @@ describe("频道核心 Analytics", () => {
     expect(requests[0]).toContain("youtubeanalytics.googleapis.com");
   });
 
+  it("官方请求把内部流量来源维度与筛选映射为官方名称", async () => {
+    const requests: string[] = [];
+    const provider = new GoogleAnalyticsProvider(async (input) => {
+      requests.push(String(input));
+      return new Response(
+        JSON.stringify({
+          columnHeaders: [
+            { name: "day", columnType: "DIMENSION" },
+            { name: "views", columnType: "METRIC" },
+          ],
+          rows: [["2026-08-19", "3"]],
+        }),
+        { status: 200 },
+      );
+    });
+    await provider.query({
+      accessToken: "access",
+      channelId,
+      startDate: "2026-08-19",
+      endDate: "2026-08-19",
+      metrics: ["views"],
+      dimensions: ["day", "trafficSourceType"],
+      filters: { trafficSourceType: "REFERRAL" },
+    });
+    expect(requests[0]).toContain(
+      "dimensions=day%2CinsightTrafficSourceType",
+    );
+    expect(requests[0]).toContain("insightTrafficSourceType%3D%3DREFERRAL");
+    expect(requests[0]).not.toContain("trafficSourceType%3D%3D");
+  });
+
   it("Google provider 拒绝零基分页索引", async () => {
     const provider = new GoogleAnalyticsProvider(async () => {
       throw new Error("fetch must not run");
