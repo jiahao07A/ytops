@@ -14,6 +14,7 @@ README 只维护已交付 CLI、安装、验证和安全摘要。架构与安全
 
 ## 当前能力
 
+<<<<<<< HEAD
 | 命令                                        | 作用                                                          | 外部工具                              |
 | ------------------------------------------- | ------------------------------------------------------------- | ------------------------------------- |
 | `doctor`                                    | 检查必需与可选工具，以及安全默认值                            | `yt-dlp`、FFmpeg 等                   |
@@ -82,10 +83,12 @@ node .\dist\cli.js --json ops channel analytics-sync --config .\ytops-config.jso
 node .\dist\cli.js --json ops channel analytics-read --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX --refresh
 node .\dist\cli.js --json ops channel retention-sync --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX
 node .\dist\cli.js --json ops channel retention-read --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX --video VIDEO_ID_11
+node .\dist\cli.js --json ops channel reporting-sync --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX --report-type channel_reach_basic_a1
+node .\dist\cli.js --json ops channel reporting-read --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX --report-type channel_reach_basic_a1 --video VIDEO_ID_11
 node .\dist\cli.js --json ops channel coverage --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-同步会保存规范化数据、原始 API 证据和分页检查点。Analytics 默认回填最近 365 天，最多 3650 天；源站失败时普通读取返回带过期标记的最后可用数据，`--latest` 失败则不回退。留存曲线以固定最早起点（2005-07-14）对单个视频发起官方查询，由官方返回实际覆盖的约 100 个进度比例点；首次留存同步处理库存全部视频并支持断点续传，之后每轮只处理新发现的视频；超过 100% 的留存点如实呈现，隐私阈值造成的空单元格省略而非置零。Reporting、评论和覆盖矩阵均保持只读，任何频道写入仍不在当前范围内。
+同步会保存规范化数据、原始 API 证据和分页检查点。Analytics 默认回填最近 365 天，最多 3650 天；源站失败时普通读取返回带过期标记的最后可用数据，`--latest` 失败则不回退。留存曲线以固定最早起点（2005-07-14）对单个视频发起官方查询，由官方返回实际覆盖的约 100 个进度比例点；首次留存同步处理库存全部视频并支持断点续传，之后每轮只处理新发现的视频；超过 100% 的留存点如实呈现，隐私阈值造成的空单元格省略而非置零。曝光与点击率经官方 reach 基础报表 `channel_reach_basic_a1` 同步：行粒度为日期×频道×视频，指标为曝光数与曝光点击率，CTR 按 CSV 原值保存（小数或百分数均不换算）；`ops channel reporting-read` 可检索规范化行并按视频过滤。官方常规报表自生成起约 60 天、历史报表约 30 天内可下载，过期即删除且无法补拉，建议至少每 30 天同步一次 reach 报表，长期数据才不会断档。Reporting、评论和覆盖矩阵均保持只读，任何频道写入仍不在当前范围内。
 
 下载必须显式表明你拥有内容权利或已经得到授权，并提供明确的输出目录：
 

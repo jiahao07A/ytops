@@ -29,7 +29,7 @@ skills
        -> job submit/status/result, not raw flags or binary streams
 ```
 
-当前实现包含媒体发现、字幕、授权媒体、本地媒体处理、配置管理、`ops doctor` 就绪检查、只读 OAuth 频道接入、可恢复频道元数据同步、核心/高维 Analytics、异步 Reporting、只读评论和覆盖矩阵。Reporting 数据在运营数据仓库中按报告类型分目录保存（`<dataDirectory>/reporting/<channelId>/<reportType>/`，各自持有状态、数据与原始证据），新增报告类型不会覆盖既有报告类型；旧的单槽位布局在首次读取时一次性迁入对应报告类型目录，此后旧路径不再写入。OAuth 令牌与客户端秘密由 Windows 用户级 DPAPI 保护；状态查询可以使用官方 API 校验凭据并报告过期、失效或撤销原因。频道写入和 MCP 适配层仍未实现；上图中这些路径是目标边界，不是当前 CLI 能力。
+当前实现包含媒体发现、字幕、授权媒体、本地媒体处理、配置管理、`ops doctor` 就绪检查、只读 OAuth 频道接入、可恢复频道元数据同步、核心/高维 Analytics、异步 Reporting、只读评论和覆盖矩阵。Reporting 数据在运营数据仓库中按报告类型分目录保存（`<dataDirectory>/reporting/<channelId>/<reportType>/`，各自持有状态、数据与原始证据），新增报告类型不会覆盖既有报告类型；旧的单槽位布局在首次读取时一次性迁入对应报告类型目录，此后旧路径不再写入。当前登记的报表类型为频道级 reach 基础报表 `channel_reach_basic_a1`（日期×频道×视频行的曝光数与曝光点击率，`ops channel reporting-read` 提供规范化读取，CTR 按 CSV 原值呈现不换算）；官方报表约 60 天、历史报表约 30 天的可下载窗口约束 reach 报表的同步节奏。报表类型校验沿用字符集规则而非硬编码白名单：官方版本号（a1/a3）会演进，`reportTypes.list` 的实时返回才是权威来源。OAuth 令牌与客户端秘密由 Windows 用户级 DPAPI 保护；状态查询可以使用官方 API 校验凭据并报告过期、失效或撤销原因。频道写入和 MCP 适配层仍未实现；上图中这些路径是目标边界，不是当前 CLI 能力。
 
 `config set-global`、`config set-channel` 和 `config set-profile` 在 CLI 被调用时会直接写入配置。CLI 没有 `--dry-run` 或 `--apply` 选项；调用方 skill 可以在调用前展示差异并征求确认，但这属于编排层行为。
 
