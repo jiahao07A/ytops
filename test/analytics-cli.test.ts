@@ -63,7 +63,10 @@ describe("CLI 频道核心 Analytics", () => {
           channelId,
           source: "youtube-analytics-api",
           channelRows: [
-            { dimensions: { day: "2026-08-19" }, metrics: { views: 10 } },
+            {
+              dimensions: { day: "2026-08-19" },
+              metrics: { views: 10, engagedViews: 8, dislikes: 1 },
+            },
           ],
           videoRows: [],
           evidence: [],
@@ -100,7 +103,10 @@ describe("CLI 频道核心 Analytics", () => {
             coverage: "partial",
             dataAsOf: "2026-08-19T00:00:00.000Z",
             channelRows: [
-              { dimensions: { day: "2026-08-19" }, metrics: { views: 10 } },
+              {
+                dimensions: { day: "2026-08-19" },
+                metrics: { views: 10, engagedViews: 8, dislikes: 1 },
+              },
             ],
           },
         },

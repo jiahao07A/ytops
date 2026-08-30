@@ -151,6 +151,49 @@ describe("频道核心 Analytics", () => {
     });
   });
 
+  it("默认同步同时请求播放口径、互动口径与新增互动指标", async () => {
+    await withAnalyticsFixture(async ({ configPath, store }) => {
+      const provider = new FakeAnalyticsProvider([
+        {
+          rows: [{ dimensions: { day: "2026-08-19" }, metrics: { views: 7 } }],
+          raw: { source: "channel" },
+          coverage: "complete",
+        },
+        {
+          rows: [{ dimensions: { video: "video-001" }, metrics: { views: 3 } }],
+          raw: { source: "video" },
+          coverage: "complete",
+        },
+      ]);
+
+      const result = await syncAnalytics(
+        configPath,
+        { channelId, videoIds: ["video-001"] },
+        {
+          provider,
+          credentialStore: store,
+          now: () => new Date("2026-08-19T12:00:00.000Z"),
+        },
+      );
+
+      const expectedMetrics = [
+        "views",
+        "engagedViews",
+        "estimatedMinutesWatched",
+        "averageViewDuration",
+        "likes",
+        "dislikes",
+        "comments",
+        "shares",
+        "subscribersGained",
+        "subscribersLost",
+      ];
+      expect(provider.queries[0].metrics).toEqual(expectedMetrics);
+      expect(provider.queries[1].metrics).toEqual(expectedMetrics);
+      expect(result.state.metrics).toEqual(expectedMetrics);
+    });
+  });
+
   it("在发起官方请求前拒绝超过 3650 天的回填", async () => {
     await withAnalyticsFixture(async ({ configPath, store }) => {
       const provider = new FakeAnalyticsProvider([]);

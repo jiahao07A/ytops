@@ -16,7 +16,10 @@ import {
 } from "./oauth.js";
 
 export { CORE_ANALYTICS_METRICS } from "./analytics-catalog.js";
-export type { AnalyticsDimension, AnalyticsMetric } from "./analytics-catalog.js";
+export type {
+  AnalyticsDimension,
+  AnalyticsMetric,
+} from "./analytics-catalog.js";
 
 export const DEFAULT_ANALYTICS_BACKFILL_DAYS = 365;
 export const MAX_ANALYTICS_BACKFILL_DAYS = 3_650;
