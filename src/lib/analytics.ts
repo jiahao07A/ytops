@@ -24,7 +24,16 @@ export type {
 export const DEFAULT_ANALYTICS_BACKFILL_DAYS = 365;
 export const MAX_ANALYTICS_BACKFILL_DAYS = 3_650;
 export const ANALYTICS_PAGE_SIZE = 200;
-export type AnalyticsPhase = "channel" | "video" | "complete";
+export type AnalyticsPhase = "channel" | "video" | "audience" | "complete";
+
+// 观众画像数据默认同步的维度组：频道级×日，每组一次官方查询。
+const AUDIENCE_BREAKDOWN_GROUPS: AnalyticsDimension[][] = [
+  ["day", "trafficSourceType"],
+  ["day", "country"],
+  ["day", "ageGroup", "gender"],
+  ["day", "subscribedStatus"],
+];
+
 export type AnalyticsRunStatus =
   "not-started" | "running" | "partial" | "completed" | "failed";
 export type AnalyticsCoverageStatus =
@@ -98,9 +107,7 @@ export class GoogleAnalyticsProvider implements AnalyticsProvider {
       startDate: input.startDate,
       endDate: input.endDate,
       metrics: input.metrics.join(","),
-      dimensions: input.dimensions
-        .map(toOfficialAnalyticsName)
-        .join(","),
+      dimensions: input.dimensions.map(toOfficialAnalyticsName).join(","),
       maxResults: String(input.maxResults ?? ANALYTICS_PAGE_SIZE),
       startIndex: String(startIndex),
     });
@@ -154,8 +161,13 @@ export interface AnalyticsSyncState {
   endDate: string;
   metrics: AnalyticsMetric[];
   progress: { pages: number; rows: number };
-  checkpoint: { channelStartIndex: number; videoStartIndex: number };
+  checkpoint: {
+    channelStartIndex: number;
+    videoStartIndex: number;
+    audience?: { group: number; startIndex: number };
+  };
   coverage: AnalyticsCoverageStatus;
+  audienceCoverage?: AnalyticsCoverageStatus;
   updatedAt: string;
   startedAt?: string;
   lastSuccessAt?: string;
@@ -169,6 +181,7 @@ export interface AnalyticsData {
   source: "youtube-analytics-api";
   channelRows: AnalyticsRow[];
   videoRows: AnalyticsRow[];
+  audienceRows?: AnalyticsRow[];
   evidence: AnalyticsEvidenceReference[];
   coverage: AnalyticsCoverageStatus;
   startDate: string;
@@ -212,7 +225,7 @@ const legacyStartIndexSchema = z.preprocess(
 const evidenceSchema = z
   .object({
     path: z.string().min(1),
-    phase: z.enum(["channel", "video", "complete"]),
+    phase: z.enum(["channel", "video", "audience", "complete"]),
     fetchedAt: z.string().min(1),
     request: z
       .object({
@@ -240,7 +253,7 @@ const analyticsStateSchema = z
       "completed",
       "failed",
     ]),
-    phase: z.enum(["channel", "video", "complete"]),
+    phase: z.enum(["channel", "video", "audience", "complete"]),
     requestedDays: z.number().int().min(1).max(MAX_ANALYTICS_BACKFILL_DAYS),
     startDate: z.string().min(1),
     endDate: z.string().min(1),
@@ -255,6 +268,13 @@ const analyticsStateSchema = z
       .object({
         channelStartIndex: legacyStartIndexSchema,
         videoStartIndex: legacyStartIndexSchema,
+        audience: z
+          .object({
+            group: z.number().int().nonnegative(),
+            startIndex: legacyStartIndexSchema,
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
     coverage: z.enum([
@@ -265,6 +285,16 @@ const analyticsStateSchema = z
       "estimated",
       "delayed",
     ]),
+    audienceCoverage: z
+      .enum([
+        "complete",
+        "partial",
+        "unavailable",
+        "permission-denied",
+        "estimated",
+        "delayed",
+      ])
+      .optional(),
     updatedAt: z.string().min(1),
     startedAt: z.string().min(1).optional(),
     lastSuccessAt: z.string().min(1).optional(),
@@ -287,6 +317,7 @@ const analyticsDataSchema = z
     source: z.literal("youtube-analytics-api"),
     channelRows: z.array(rowSchema),
     videoRows: z.array(rowSchema),
+    audienceRows: z.array(rowSchema).optional(),
     evidence: z.array(evidenceSchema),
     coverage: z.enum([
       "complete",
@@ -321,7 +352,11 @@ function defaultState(
     endDate,
     metrics,
     progress: { pages: 0, rows: 0 },
-    checkpoint: { channelStartIndex: 1, videoStartIndex: 1 },
+    checkpoint: {
+      channelStartIndex: 1,
+      videoStartIndex: 1,
+      audience: { group: 0, startIndex: 1 },
+    },
     coverage: "partial",
     updatedAt: now,
   };
@@ -335,6 +370,7 @@ function normalizeCheckpoint(
       checkpoint.channelStartIndex === 0 ? 1 : checkpoint.channelStartIndex,
     videoStartIndex:
       checkpoint.videoStartIndex === 0 ? 1 : checkpoint.videoStartIndex,
+    audience: checkpoint.audience ?? { group: 0, startIndex: 1 },
   };
 }
 
@@ -765,8 +801,115 @@ export async function syncAnalytics(
       await saveJson(paths.state, state);
       workUnits += 1;
       if (result.nextStartIndex === undefined) {
+        state = { ...state, phase: "audience" };
+        break;
+      }
+    }
+
+    while (state.phase === "audience" && canContinue()) {
+      const audienceCheckpoint = state.checkpoint.audience ?? {
+        group: 0,
+        startIndex: 1,
+      };
+      if (audienceCheckpoint.group >= AUDIENCE_BREAKDOWN_GROUPS.length) {
         state = { ...state, phase: "complete" };
         break;
+      }
+      const dimensions =
+        AUDIENCE_BREAKDOWN_GROUPS[audienceCheckpoint.group] ?? [];
+      const request: AnalyticsQuery = {
+        channelId: access.channelId,
+        startDate: state.startDate,
+        endDate: state.endDate,
+        metrics,
+        dimensions,
+        startIndex: audienceCheckpoint.startIndex,
+        maxResults: ANALYTICS_PAGE_SIZE,
+      };
+      const fetchedAt = nowFactory().toISOString();
+      try {
+        const result = await provider.query({
+          ...request,
+          accessToken: access.accessToken,
+        });
+        const evidencePath = await saveEvidence(
+          paths,
+          "audience",
+          request,
+          result.raw,
+          fetchedAt,
+        );
+        data = {
+          ...data,
+          startDate: state.startDate,
+          endDate: state.endDate,
+          audienceRows: mergeRows(data.audienceRows ?? [], result.rows),
+          evidence: [
+            ...data.evidence,
+            { path: evidencePath, phase: "audience", fetchedAt, request },
+          ],
+          coverage: nextCoverage(data.coverage, result.coverage),
+          dataAsOf: result.dataAsOf ?? fetchedAt,
+          updatedAt: fetchedAt,
+        };
+        state = {
+          ...state,
+          audienceCoverage: nextCoverage(
+            state.audienceCoverage ?? "partial",
+            result.coverage,
+          ),
+          checkpoint: {
+            ...state.checkpoint,
+            audience:
+              result.nextStartIndex === undefined
+                ? {
+                    group: audienceCheckpoint.group + 1,
+                    startIndex: 1,
+                  }
+                : {
+                    group: audienceCheckpoint.group,
+                    startIndex: result.nextStartIndex,
+                  },
+          },
+          progress: {
+            pages: state.progress.pages + 1,
+            rows: state.progress.rows + result.rows.length,
+          },
+          dataAsOf: result.dataAsOf ?? fetchedAt,
+          updatedAt: fetchedAt,
+        };
+        await saveJson(paths.data, data);
+        await saveJson(paths.state, state);
+        workUnits += 1;
+        if (
+          result.nextStartIndex === undefined &&
+          audienceCheckpoint.group + 1 >= AUDIENCE_BREAKDOWN_GROUPS.length
+        ) {
+          state = { ...state, phase: "complete" };
+          break;
+        }
+      } catch (error) {
+        // 单个画像组的失败只降级画像覆盖状态，不影响已取得的核心事实。
+        const normalized = normalizeAnalyticsError(error);
+        state = {
+          ...state,
+          audienceCoverage: nextCoverage(
+            state.audienceCoverage ?? "partial",
+            normalized.kind === "permission"
+              ? "permission-denied"
+              : "unavailable",
+          ),
+          checkpoint: {
+            ...state.checkpoint,
+            audience: {
+              group: audienceCheckpoint.group + 1,
+              startIndex: 1,
+            },
+          },
+          updatedAt: fetchedAt,
+        };
+        await saveJson(paths.state, state);
+        workUnits += 1;
       }
     }
 

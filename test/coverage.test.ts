@@ -69,6 +69,10 @@ describe("覆盖矩阵与证据审计", () => {
             status: "partial",
           }),
           expect.objectContaining({
+            capability: "analytics.audience",
+            status: "unavailable",
+          }),
+          expect.objectContaining({
             capability: "comments.readonly",
             status: "unavailable",
           }),
@@ -115,6 +119,97 @@ describe("覆盖矩阵与证据审计", () => {
       );
     } finally {
       await cleanupFixture(root, configPath);
+    }
+  });
+
+  it("观众画像数据按同步状态呈现覆盖条目", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-coverage-"));
+    const configPath = join(root, "config.json");
+    const analyticsRoot = join(root, ".ytops-data", "analytics", channelId);
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      await mkdir(join(analyticsRoot, "evidence"), { recursive: true });
+      await writeFile(
+        join(analyticsRoot, "sync-state.json"),
+        `${JSON.stringify({
+          version: 1,
+          channelId,
+          status: "completed",
+          phase: "complete",
+          requestedDays: 365,
+          startDate: "2025-08-20",
+          endDate: "2026-08-19",
+          metrics: ["views"],
+          progress: { pages: 6, rows: 6 },
+          checkpoint: {
+            channelStartIndex: 1,
+            videoStartIndex: 1,
+            audience: { group: 4, startIndex: 1 },
+          },
+          coverage: "complete",
+          audienceCoverage: "complete",
+          updatedAt: "2026-08-19T01:00:00.000Z",
+          lastSuccessAt: "2026-08-19T01:00:00.000Z",
+          dataAsOf: "2026-08-19T00:00:00.000Z",
+        })}\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(analyticsRoot, "data.json"),
+        `${JSON.stringify({
+          version: 1,
+          channelId,
+          source: "youtube-analytics-api",
+          channelRows: [],
+          videoRows: [],
+          audienceRows: [
+            {
+              dimensions: { day: "2026-08-19", country: "US" },
+              metrics: { views: 4 },
+            },
+          ],
+          evidence: [
+            {
+              path: "evidence-audience.json",
+              phase: "audience",
+              fetchedAt: "2026-08-19T01:00:00.000Z",
+              request: {
+                channelId,
+                startDate: "2025-08-20",
+                endDate: "2026-08-19",
+                metrics: ["views"],
+                dimensions: ["day", "country"],
+              },
+            },
+          ],
+          coverage: "complete",
+          startDate: "2025-08-20",
+          endDate: "2026-08-19",
+          dataAsOf: "2026-08-19T00:00:00.000Z",
+        })}\n`,
+        "utf8",
+      );
+
+      const matrix = await getCoverageMatrix(configPath, channelId);
+      expect(matrix.entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            capability: "analytics.audience",
+            status: "supported",
+          }),
+        ]),
+      );
+    } finally {
+      await cleanupFixture(root, configPath);
+      await rmdir(join(analyticsRoot, "evidence")).catch(() => undefined);
+      await unlink(join(analyticsRoot, "sync-state.json")).catch(
+        () => undefined,
+      );
+      await unlink(join(analyticsRoot, "data.json")).catch(() => undefined);
+      await rmdir(analyticsRoot).catch(() => undefined);
+      await rmdir(join(root, ".ytops-data", "analytics")).catch(
+        () => undefined,
+      );
     }
   });
 

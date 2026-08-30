@@ -99,7 +99,7 @@ async function withAnalyticsFixture(
 }
 
 describe("频道核心 Analytics", () => {
-  it("默认请求最近 365 天，并分别同步频道和视频事实", async () => {
+  it("默认请求最近 365 天,并分别同步频道、视频与画像事实", async () => {
     await withAnalyticsFixture(async ({ configPath, store }) => {
       const provider = new FakeAnalyticsProvider([
         {
@@ -111,6 +111,56 @@ describe("频道核心 Analytics", () => {
         {
           rows: [{ dimensions: { video: "video-001" }, metrics: { views: 3 } }],
           raw: { source: "video" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                trafficSourceType: "REFERRAL",
+              },
+              metrics: { views: 2 },
+            },
+          ],
+          raw: { source: "audience-traffic" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: { day: "2026-08-19", country: "US" },
+              metrics: { views: 4 },
+            },
+          ],
+          raw: { source: "audience-country" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                ageGroup: "AGE_25_34",
+                gender: "female",
+              },
+              metrics: { views: 1 },
+            },
+          ],
+          raw: { source: "audience-demo" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                subscribedStatus: "SUBSCRIBED",
+              },
+              metrics: { estimatedMinutesWatched: 9 },
+            },
+          ],
+          raw: { source: "audience-subscribed" },
           coverage: "complete",
         },
       ]);
@@ -131,7 +181,7 @@ describe("频道核心 Analytics", () => {
       expect(result.state.endDate).toBe("2026-08-19");
       expect(result.data.channelRows).toHaveLength(1);
       expect(result.data.videoRows).toHaveLength(1);
-      expect(provider.queries).toHaveLength(2);
+      expect(provider.queries).toHaveLength(6);
       expect(provider.queries[0]).toMatchObject({
         accessToken: "analytics-access-token-must-not-leak",
         channelId,
@@ -145,6 +195,20 @@ describe("频道核心 Analytics", () => {
         filters: { video: "video-001" },
         startIndex: 1,
       });
+      expect(provider.queries[2]).toMatchObject({
+        dimensions: ["day", "trafficSourceType"],
+        startIndex: 1,
+      });
+      expect(provider.queries[3]).toMatchObject({
+        dimensions: ["day", "country"],
+      });
+      expect(provider.queries[4]).toMatchObject({
+        dimensions: ["day", "ageGroup", "gender"],
+      });
+      expect(provider.queries[5]).toMatchObject({
+        dimensions: ["day", "subscribedStatus"],
+      });
+      expect(result.data.audienceRows).toHaveLength(4);
       const evidence = await readFile(result.data.evidence[0].path, "utf8");
       expect(evidence).not.toContain("analytics-access-token-must-not-leak");
       expect(result.data.coverage).toBe("complete");
@@ -239,6 +303,52 @@ describe("频道核心 Analytics", () => {
           rows: [{ dimensions: { video: "video-001" }, metrics: { views: 1 } }],
           raw: { video: true },
         },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                trafficSourceType: "REFERRAL",
+              },
+              metrics: { views: 1 },
+            },
+          ],
+          raw: { audience: "traffic" },
+        },
+        {
+          rows: [
+            {
+              dimensions: { day: "2026-08-19", country: "US" },
+              metrics: { views: 1 },
+            },
+          ],
+          raw: { audience: "country" },
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                ageGroup: "AGE_25_34",
+                gender: "female",
+              },
+              metrics: { views: 1 },
+            },
+          ],
+          raw: { audience: "demo" },
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                subscribedStatus: "SUBSCRIBED",
+              },
+              metrics: { views: 1 },
+            },
+          ],
+          raw: { audience: "subscribed" },
+        },
       ]);
       const second = await syncAnalytics(
         configPath,
@@ -252,6 +362,7 @@ describe("频道核心 Analytics", () => {
       expect(second.state.status).toBe("completed");
       expect(second.data.channelRows).toHaveLength(2);
       expect(second.data.videoRows).toHaveLength(1);
+      expect(second.data.audienceRows).toHaveLength(4);
       expect(secondProvider.queries[0].startIndex).toBe(201);
     });
   });
@@ -284,6 +395,10 @@ describe("频道核心 Analytics", () => {
         const provider = new FakeAnalyticsProvider([
           { rows: [], raw: { phase: "channel" } },
           { rows: [], raw: { phase: "video" } },
+          { rows: [], raw: { phase: "audience-traffic" } },
+          { rows: [], raw: { phase: "audience-country" } },
+          { rows: [], raw: { phase: "audience-demo" } },
+          { rows: [], raw: { phase: "audience-subscribed" } },
         ]);
         result = await syncAnalytics(
           configPath,
@@ -296,16 +411,18 @@ describe("频道核心 Analytics", () => {
         );
 
         expect(provider.queries.map((query) => query.startIndex)).toEqual([
-          1, 1,
+          1, 1, 1, 1, 1, 1,
         ]);
         expect(result.state.checkpoint).toEqual({
           channelStartIndex: 1,
           videoStartIndex: 1,
+          audience: { group: 4, startIndex: 1 },
         });
         const savedState = JSON.parse(await readFile(statePath, "utf8"));
         expect(savedState.checkpoint).toEqual({
           channelStartIndex: 1,
           videoStartIndex: 1,
+          audience: { group: 4, startIndex: 1 },
         });
       } finally {
         for (const evidence of result?.data.evidence ?? []) {
@@ -338,6 +455,186 @@ describe("频道核心 Analytics", () => {
       expect(result.state.coverage).toBe("permission-denied");
       expect(result.state.error).toMatchObject({ kind: "permission" });
       expect(result.data.channelRows).toEqual([]);
+    });
+  });
+
+  it("画像组失败不影响核心结果，并把画像覆盖标记为资格受限", async () => {
+    await withAnalyticsFixture(async ({ configPath, store }) => {
+      const provider = new FakeAnalyticsProvider([
+        {
+          rows: [{ dimensions: { day: "2026-08-19" }, metrics: { views: 7 } }],
+          raw: { source: "channel" },
+          coverage: "complete",
+        },
+        {
+          rows: [{ dimensions: { video: "video-001" }, metrics: { views: 3 } }],
+          raw: { source: "video" },
+          coverage: "complete",
+        },
+        new AnalyticsServiceError(
+          "当前 OAuth 授权不包含 Analytics 读取权限。",
+          "permission",
+          false,
+        ),
+        {
+          rows: [
+            {
+              dimensions: { day: "2026-08-19", country: "US" },
+              metrics: { views: 4 },
+            },
+          ],
+          raw: { source: "audience-country" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                ageGroup: "AGE_25_34",
+                gender: "female",
+              },
+              metrics: { views: 1 },
+            },
+          ],
+          raw: { source: "audience-demo" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                subscribedStatus: "SUBSCRIBED",
+              },
+              metrics: { views: 2 },
+            },
+          ],
+          raw: { source: "audience-subscribed" },
+          coverage: "complete",
+        },
+      ]);
+      const result = await syncAnalytics(
+        configPath,
+        { channelId, videoIds: ["video-001"] },
+        {
+          provider,
+          credentialStore: store,
+          now: () => new Date("2026-08-19T12:00:00.000Z"),
+        },
+      );
+      expect(result.state.status).toBe("completed");
+      expect(result.state.audienceCoverage).toBe("permission-denied");
+      expect(result.state.coverage).toBe("complete");
+      expect(result.data.channelRows).toHaveLength(1);
+      expect(result.data.videoRows).toHaveLength(1);
+      expect(result.data.audienceRows).toHaveLength(3);
+      expect(
+        result.data.audienceRows?.some(
+          (row) => row.dimensions.trafficSourceType === "REFERRAL",
+        ),
+      ).toBe(false);
+    });
+  });
+
+  it("画像阶段从组检查点恢复且不重复核心阶段", async () => {
+    await withAnalyticsFixture(async ({ configPath, store }) => {
+      const firstProvider = new FakeAnalyticsProvider([
+        {
+          rows: [{ dimensions: { day: "2026-08-19" }, metrics: { views: 7 } }],
+          raw: { source: "channel" },
+          coverage: "complete",
+        },
+        {
+          rows: [{ dimensions: { video: "video-001" }, metrics: { views: 3 } }],
+          raw: { source: "video" },
+          coverage: "complete",
+        },
+      ]);
+      const first = await syncAnalytics(
+        configPath,
+        { channelId, videoIds: ["video-001"], maxWorkUnits: 2 },
+        {
+          provider: firstProvider,
+          credentialStore: store,
+          now: () => new Date("2026-08-19T12:00:00.000Z"),
+        },
+      );
+      expect(first.state.status).toBe("partial");
+      expect(first.state.phase).toBe("audience");
+      expect(first.state.checkpoint.audience).toEqual({
+        group: 0,
+        startIndex: 1,
+      });
+
+      const secondProvider = new FakeAnalyticsProvider([
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                trafficSourceType: "REFERRAL",
+              },
+              metrics: { views: 2 },
+            },
+          ],
+          raw: { audience: "traffic" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: { day: "2026-08-19", country: "US" },
+              metrics: { views: 4 },
+            },
+          ],
+          raw: { audience: "country" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                ageGroup: "AGE_25_34",
+                gender: "female",
+              },
+              metrics: { views: 1 },
+            },
+          ],
+          raw: { audience: "demo" },
+          coverage: "complete",
+        },
+        {
+          rows: [
+            {
+              dimensions: {
+                day: "2026-08-19",
+                subscribedStatus: "SUBSCRIBED",
+              },
+              metrics: { views: 2 },
+            },
+          ],
+          raw: { audience: "subscribed" },
+          coverage: "complete",
+        },
+      ]);
+      const second = await syncAnalytics(
+        configPath,
+        { channelId, videoIds: ["video-001"] },
+        {
+          provider: secondProvider,
+          credentialStore: store,
+          now: () => new Date("2026-08-19T12:00:00.000Z"),
+        },
+      );
+      expect(second.state.status).toBe("completed");
+      expect(secondProvider.queries).toHaveLength(4);
+      expect(secondProvider.queries[0].dimensions).toEqual([
+        "day",
+        "trafficSourceType",
+      ]);
+      expect(second.data.audienceRows).toHaveLength(4);
     });
   });
 
@@ -395,9 +692,7 @@ describe("频道核心 Analytics", () => {
       dimensions: ["day", "trafficSourceType"],
       filters: { trafficSourceType: "REFERRAL" },
     });
-    expect(requests[0]).toContain(
-      "dimensions=day%2CinsightTrafficSourceType",
-    );
+    expect(requests[0]).toContain("dimensions=day%2CinsightTrafficSourceType");
     expect(requests[0]).toContain("insightTrafficSourceType%3D%3DREFERRAL");
     expect(requests[0]).not.toContain("trafficSourceType%3D%3D");
   });

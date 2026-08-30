@@ -103,6 +103,17 @@ export async function getCoverageMatrix(
         : analytics.state.status === "completed"
           ? "partial"
           : "unavailable";
+  const audienceStatus: CoverageMatrixStatus =
+    analytics.state.audienceCoverage === "permission-denied"
+      ? "qualification-limited"
+      : analytics.data.audienceRows === undefined ||
+          analytics.state.audienceCoverage === undefined ||
+          analytics.state.audienceCoverage === "unavailable"
+        ? "unavailable"
+        : analytics.state.status === "completed" &&
+            analytics.state.audienceCoverage === "complete"
+          ? "supported"
+          : "partial";
   const reportingStatus: CoverageMatrixStatus =
     reporting.state.status === "imported"
       ? "supported"
@@ -155,6 +166,23 @@ export async function getCoverageMatrix(
           : { reason: analytics.state.error.message }),
         evidencePaths: safeEvidencePaths(
           analytics.data.evidence.map((evidence) => evidence.path),
+        ),
+      },
+      {
+        capability: "analytics.audience",
+        source: analytics.data.source,
+        status: audienceStatus,
+        scope: "频道级观众画像:流量来源、国家、年龄与性别、订阅状态",
+        ...(analytics.data.dataAsOf === undefined
+          ? {}
+          : { dataAsOf: analytics.data.dataAsOf }),
+        ...(analytics.state.error === undefined
+          ? {}
+          : { reason: analytics.state.error.message }),
+        evidencePaths: safeEvidencePaths(
+          analytics.data.evidence
+            .filter((evidence) => evidence.phase === "audience")
+            .map((evidence) => evidence.path),
         ),
       },
       {
