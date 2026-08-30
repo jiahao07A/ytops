@@ -250,6 +250,18 @@ export interface ReportingResult {
   data: ReportingData;
 }
 
+/** 规范化读取视图的行；reach 报表行使用 camelCase 字段，其余列如实透传。 */
+export type ReportingReadRow = ReportingRow;
+
+export interface ReportingReadResult {
+  channelId: string;
+  reportType: string;
+  status: ReportingRunStatus;
+  coverage: ReportingCoverageStatus;
+  dataAsOf?: string;
+  rows: ReportingReadRow[];
+}
+
 export interface ReportingDependencies extends Pick<
   OAuthWorkflowDependencies,
   "credentialStore" | "now"
@@ -316,6 +328,26 @@ const dataSchema = z
 
 /** 官方报告类型 ID（如 channel_basic_a2）只含这些字符，可直接作为目录名。 */
 const REPORT_TYPE_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * 已登记支持的 Reporting 报表类型（官方 reportTypeId）。
+ * 同步与读取校验沿用 05 号工票确立的字符集规则而非硬编码白名单：
+ * 官方报表版本号（a1/a3）会随时间演进，reportTypes.list 的实时返回
+ * 才是权威来源，白名单会在官方升版时把仍可用的报表拒之门外。
+ */
+export const REPORTING_REPORT_TYPES = ["channel_reach_basic_a1"] as const;
+
+/** reach 基础报表族：官方列语义按族判断，版本号演进不改变列名。 */
+const REACH_BASIC_REPORT_TYPE_PATTERN = /^channel_reach_basic_/;
+
+/** reach 报表官方 CSV 列到规范化字段的映射；未列出的列原样保留。 */
+const REACH_BASIC_COLUMN_MAP: Record<string, string> = {
+  channel_id: "channelId",
+  date: "date",
+  video_id: "videoId",
+  video_thumbnail_impressions: "impressions",
+  video_thumbnail_impressions_ctr: "ctr",
+};
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -689,11 +721,59 @@ export async function getReportingStatus(
   return { channelId, state, data: withCanonicalJobId(data) };
 }
 
+/** reach 报表行按官方列映射规范化；其余报表类型的行原样透传。 */
+function normalizeReportingRow(
+  reportType: string,
+  row: ReportingRow,
+): ReportingReadRow {
+  if (!REACH_BASIC_REPORT_TYPE_PATTERN.test(reportType)) {
+    return { ...row };
+  }
+  const normalized: ReportingReadRow = {};
+  for (const [column, value] of Object.entries(row)) {
+    normalized[REACH_BASIC_COLUMN_MAP[column] ?? column] = value;
+  }
+  return normalized;
+}
+
+/**
+ * 读取已导入 Reporting 报表行的规范化视图，可按视频过滤。
+ * reach 报表行的曝光与点击率取 CSV 原值（小数或百分数均不换算）。
+ */
+export async function readReportingRows(
+  configPath: string,
+  channelId: string,
+  options: { reportType: string; videoId?: string },
+): Promise<ReportingReadResult> {
+  if (options.videoId !== undefined && options.videoId.trim().length === 0) {
+    throw new UserInputError("视频 ID 不能为空。");
+  }
+  const { state, data } = await getReportingStatus(configPath, channelId, {
+    reportType: options.reportType,
+  });
+  const rows = data.rows
+    .map((row) => normalizeReportingRow(state.reportType, row))
+    .filter(
+      (row) =>
+        options.videoId === undefined ||
+        (row.videoId ?? row.video_id) === options.videoId,
+    );
+  return {
+    channelId,
+    reportType: state.reportType,
+    status: state.status,
+    coverage: state.coverage,
+    ...(data.dataAsOf === undefined && state.dataAsOf === undefined
+      ? {}
+      : { dataAsOf: data.dataAsOf ?? state.dataAsOf }),
+    rows,
+  };
+}
+
 /**
  * 列出频道下全部已有状态的报告类型（按报告类型名称稳定排序）。
  * 只呈现真正同步过的报告类型目录，不为缺失类型虚构默认状态。
- */
-export async function listReportingResults(
+ */ export async function listReportingResults(
   configPath: string,
   channelId: string,
 ): Promise<ReportingResult[]> {

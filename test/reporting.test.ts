@@ -6,6 +6,7 @@ import { initializeChannelOperationsConfig } from "../src/lib/config.js";
 import {
   GoogleReportingProvider,
   getReportingStatus,
+  readReportingRows,
   syncReporting,
   type ReportingDependencies,
   type ReportingProvider,
@@ -353,6 +354,294 @@ describe("异步 Reporting 数据源", () => {
         request: 1,
         status: 2,
         download: 1,
+      });
+    });
+  });
+
+  it("读取 reach 报表返回规范化的曝光与点击率行，并可按视频过滤", async () => {
+    await fixture(async ({ configPath, store }) => {
+      const reachRows: ReportingRow[] = [
+        {
+          date: "2026-08-19",
+          channel_id: channelId,
+          video_id: "v1",
+          video_thumbnail_impressions: "100",
+          video_thumbnail_impressions_ctr: "0.0523",
+        },
+        {
+          date: "2026-08-20",
+          channel_id: channelId,
+          video_id: "v2",
+          video_thumbnail_impressions: "40",
+          video_thumbnail_impressions_ctr: "5.25%",
+        },
+      ];
+      const provider: ReportingProvider = {
+        async requestReport() {
+          return { jobId: "job-reach-a1", raw: { requested: true } };
+        },
+        async getReportStatus() {
+          return {
+            status: "ready",
+            raw: { state: "ready" },
+            dataAsOf: "2026-08-19T00:00:00.000Z",
+          };
+        },
+        async downloadReport() {
+          return {
+            rows: reachRows,
+            raw: { csv: "scripted" },
+            dataAsOf: "2026-08-19T00:00:00.000Z",
+          };
+        },
+      };
+      const dependencies: ReportingDependencies = {
+        provider,
+        credentialStore: store,
+      };
+      await syncReporting(
+        configPath,
+        { channelId, reportType: "channel_reach_basic_a1" },
+        dependencies,
+      );
+
+      const read = await readReportingRows(configPath, channelId, {
+        reportType: "channel_reach_basic_a1",
+      });
+      expect(read.status).toBe("imported");
+      expect(read.dataAsOf).toBe("2026-08-19T00:00:00.000Z");
+      expect(read.rows).toEqual([
+        {
+          date: "2026-08-19",
+          channelId: "UC1111111111111111111111",
+          videoId: "v1",
+          impressions: "100",
+          ctr: "0.0523",
+        },
+        {
+          date: "2026-08-20",
+          channelId: "UC1111111111111111111111",
+          videoId: "v2",
+          impressions: "40",
+          ctr: "5.25%",
+        },
+      ]);
+
+      const filtered = await readReportingRows(configPath, channelId, {
+        reportType: "channel_reach_basic_a1",
+        videoId: "v2",
+      });
+      expect(filtered.rows).toEqual([
+        {
+          date: "2026-08-20",
+          channelId: "UC1111111111111111111111",
+          videoId: "v2",
+          impressions: "40",
+          ctr: "5.25%",
+        },
+      ]);
+    });
+  });
+
+  it("解析 reach 报表 CSV 的官方列并保留空单元格", async () => {
+    const provider = new GoogleReportingProvider(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/jobs") && init?.method === "POST") {
+        return Response.json({ id: "job-reach-csv" });
+      }
+      if (url.endsWith("/jobs/job-reach-csv/reports")) {
+        return Response.json({
+          reports: [
+            { id: "report-reach", downloadUrl: "https://download/reach-a1" },
+          ],
+        });
+      }
+      if (url === "https://download/reach-a1") {
+        return new Response(
+          "date,channel_id,video_id,video_thumbnail_impressions,video_thumbnail_impressions_ctr\r\n2026-08-19,UC1111111111111111111111,v1,100,0.0523\r\n2026-08-20,UC1111111111111111111111,v2,,0.0411\r\n",
+          { status: 200 },
+        );
+      }
+      return Response.json(
+        { error: { message: "unexpected request" } },
+        { status: 500 },
+      );
+    });
+
+    const requested = await provider.requestReport({
+      accessToken: "access-token",
+      channelId,
+      reportType: "channel_reach_basic_a1",
+    });
+    expect(requested.jobId).toBe("job-reach-csv");
+
+    const downloaded = await provider.downloadReport({
+      accessToken: "access-token",
+      channelId,
+      jobId: requested.jobId,
+      downloadUrl: "https://download/reach-a1",
+    });
+    expect(downloaded.rows).toEqual([
+      {
+        date: "2026-08-19",
+        channel_id: "UC1111111111111111111111",
+        video_id: "v1",
+        video_thumbnail_impressions: "100",
+        video_thumbnail_impressions_ctr: "0.0523",
+      },
+      {
+        date: "2026-08-20",
+        channel_id: "UC1111111111111111111111",
+        video_id: "v2",
+        video_thumbnail_impressions: "",
+        video_thumbnail_impressions_ctr: "0.0411",
+      },
+    ]);
+  });
+
+  it("reach 报表与 channel_basic 报表并存，重复导入按行键合并且幂等", async () => {
+    await fixture(async ({ configPath, store }) => {
+      const reachBatch1: ReportingRow[] = [
+        {
+          date: "2026-08-19",
+          channel_id: channelId,
+          video_id: "v1",
+          video_thumbnail_impressions: "100",
+          video_thumbnail_impressions_ctr: "0.0523",
+        },
+      ];
+      const reachBatch2: ReportingRow[] = [
+        {
+          date: "2026-08-19",
+          channel_id: channelId,
+          video_id: "v1",
+          video_thumbnail_impressions: "100",
+          video_thumbnail_impressions_ctr: "0.0523",
+        },
+        {
+          date: "2026-08-20",
+          channel_id: channelId,
+          video_id: "v2",
+          video_thumbnail_impressions: "55",
+          video_thumbnail_impressions_ctr: "0.0408",
+        },
+      ];
+      const basicRows: ReportingRow[] = [{ date: "2026-08-19", views: 7 }];
+      const jobTypes: Record<string, string> = {
+        "job-reach-a1": "channel_reach_basic_a1",
+        "job-reach-a1-2": "channel_reach_basic_a1",
+        "job-basic-a3": "channel_basic_a3",
+      };
+      const batches: Record<string, ReportingRow[][]> = {
+        channel_reach_basic_a1: [reachBatch1, reachBatch2],
+        channel_basic_a3: [basicRows],
+      };
+      const statusCalls: Record<string, number> = {};
+      const downloadCalls: Record<string, number> = {};
+      const provider: ReportingProvider = {
+        async requestReport(input) {
+          if (batches[input.reportType] === undefined) {
+            throw new Error(`未脚本化的报告类型：${input.reportType}`);
+          }
+          return {
+            jobId:
+              input.reportType === "channel_basic_a3"
+                ? "job-basic-a3"
+                : "job-reach-a1",
+            raw: { requested: true },
+          };
+        },
+        async getReportStatus(input) {
+          const reportType = jobTypes[input.jobId ?? input.reportId ?? ""];
+          if (reportType === undefined) {
+            throw new Error(`未脚本化的 Job：${input.jobId ?? input.reportId}`);
+          }
+          statusCalls[reportType] = (statusCalls[reportType] ?? 0) + 1;
+          return statusCalls[reportType] === 1
+            ? { status: "waiting", raw: { state: "pending" } }
+            : {
+                status: "ready",
+                raw: { state: "ready" },
+                dataAsOf: "2026-08-19T00:00:00.000Z",
+              };
+        },
+        async downloadReport(input) {
+          const reportType = jobTypes[input.jobId ?? input.reportId ?? ""];
+          if (reportType === undefined) {
+            throw new Error(`未脚本化的 Job：${input.jobId ?? input.reportId}`);
+          }
+          const typeBatches = batches[reportType];
+          const call = downloadCalls[reportType] ?? 0;
+          downloadCalls[reportType] = call + 1;
+          return {
+            rows: typeBatches[Math.min(call, typeBatches.length - 1)],
+            raw: { csv: "scripted" },
+            dataAsOf: "2026-08-19T00:00:00.000Z",
+          };
+        },
+      };
+      const dependencies: ReportingDependencies = {
+        provider,
+        credentialStore: store,
+      };
+
+      for (const reportType of ["channel_reach_basic_a1", "channel_basic_a3"]) {
+        const waiting = await syncReporting(
+          configPath,
+          { channelId, reportType },
+          dependencies,
+        );
+        expect(waiting.state.status).toBe("waiting");
+        const imported = await syncReporting(
+          configPath,
+          { channelId, reportType },
+          dependencies,
+        );
+        expect(imported.state.status).toBe("imported");
+      }
+
+      const reachMerged = await syncReporting(
+        configPath,
+        {
+          channelId,
+          reportType: "channel_reach_basic_a1",
+          reportId: "job-reach-a1-2",
+        },
+        dependencies,
+      );
+      expect(reachMerged.state.status).toBe("imported");
+      expect(reachMerged.data.rows).toHaveLength(2);
+
+      const reachRead = await readReportingRows(configPath, channelId, {
+        reportType: "channel_reach_basic_a1",
+        videoId: "v2",
+      });
+      expect(reachRead.rows).toEqual([
+        {
+          date: "2026-08-20",
+          channelId: "UC1111111111111111111111",
+          videoId: "v2",
+          impressions: "55",
+          ctr: "0.0408",
+        },
+      ]);
+
+      const downloadsBeforeResync = JSON.stringify(downloadCalls);
+      const reachResynced = await syncReporting(
+        configPath,
+        { channelId, reportType: "channel_reach_basic_a1" },
+        dependencies,
+      );
+      expect(reachResynced.data.rows).toHaveLength(2);
+      expect(JSON.stringify(downloadCalls)).toBe(downloadsBeforeResync);
+
+      const basicRead = await getReportingStatus(configPath, channelId, {
+        reportType: "channel_basic_a3",
+      });
+      expect(basicRead.data.rows).toEqual(basicRows);
+      expect(downloadCalls).toEqual({
+        channel_reach_basic_a1: 2,
+        channel_basic_a3: 1,
       });
     });
   });
