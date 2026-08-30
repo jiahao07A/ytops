@@ -1790,7 +1790,11 @@ channelOperations
 operations
   .command("doctor")
   .description("检查可选发布工具与 OAuth 环境变量；不会发起登录或写入频道")
-  .action(async () =>
+  .option(
+    "-c, --config <path>",
+    "频道运营配置路径；提供时报告货币分析权限的 opt-in 状态",
+  )
+  .action(async (options: { config?: string }) =>
     execute("运营环境检查", async () => ({
       youtubeDataClientIdConfigured: Boolean(
         process.env.YTOPS_GOOGLE_CLIENT_ID,
@@ -1806,7 +1810,11 @@ operations
       ),
       guidance:
         "频道读取、Analytics、上传和更新必须走官方 YouTube API/OAuth，并在每个写操作前提供目标与预览确认。公开检索 cookie 默认不读取；显式 opt-in 时建议使用导出的 cookie 文件或 firefox（Windows 上 Chrome/Edge 受 App-Bound Encryption 限制），并使用专用小号以降低账号风控风险。",
-      ...(await runDoctor()),
+      ...(await runDoctor({
+        ...(options.config === undefined
+          ? {}
+          : { operationsConfigPath: options.config }),
+      })),
     })),
   );
 

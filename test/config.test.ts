@@ -383,10 +383,7 @@ describe("公开检索 cookie 配置", () => {
         false,
       );
       expect(
-        resolveRevenueOptIn(
-          channelDisabled.config,
-          "UC2222222222222222222222",
-        ),
+        resolveRevenueOptIn(channelDisabled.config, "UC2222222222222222222222"),
       ).toBe(true);
     } finally {
       if (existsSync(configPath)) {

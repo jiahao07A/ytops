@@ -350,6 +350,104 @@ describe("覆盖矩阵与证据审计", () => {
     }
   });
 
+  it("收入能力条目按 opt-in 与数据呈现资格受限或估算状态", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-coverage-"));
+    const configPath = join(root, "config.json");
+    const analyticsRoot = join(root, ".ytops-data", "analytics", channelId);
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const initial = await getCoverageMatrix(configPath, channelId);
+      expect(
+        initial.entries.find(
+          (entry) => entry.capability === "analytics.revenue",
+        ),
+      ).toMatchObject({
+        status: "qualification-limited",
+      });
+
+      await mkdir(join(analyticsRoot, "evidence"), { recursive: true });
+      await writeFile(
+        join(analyticsRoot, "sync-state.json"),
+        `${JSON.stringify({
+          version: 1,
+          channelId,
+          status: "completed",
+          phase: "complete",
+          requestedDays: 365,
+          startDate: "2025-08-20",
+          endDate: "2026-08-19",
+          metrics: ["views"],
+          progress: { pages: 2, rows: 2 },
+          checkpoint: { channelStartIndex: 1, videoStartIndex: 1 },
+          coverage: "complete",
+          revenueOptIn: true,
+          updatedAt: "2026-08-19T01:00:00.000Z",
+          lastSuccessAt: "2026-08-19T01:00:00.000Z",
+          dataAsOf: "2026-08-19T00:00:00.000Z",
+        })}\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(analyticsRoot, "data.json"),
+        `${JSON.stringify({
+          version: 1,
+          channelId,
+          source: "youtube-analytics-api",
+          channelRows: [
+            {
+              dimensions: { day: "2026-08-19" },
+              metrics: { views: 10, estimatedRevenue: 0.4 },
+            },
+          ],
+          videoRows: [],
+          evidence: [
+            {
+              path: "evidence-revenue.json",
+              phase: "channel",
+              fetchedAt: "2026-08-19T01:00:00.000Z",
+              request: {
+                channelId,
+                startDate: "2025-08-20",
+                endDate: "2026-08-19",
+                metrics: ["views", "estimatedRevenue"],
+                dimensions: ["day"],
+                currency: "USD",
+              },
+            },
+          ],
+          coverage: "complete",
+          startDate: "2025-08-20",
+          endDate: "2026-08-19",
+          dataAsOf: "2026-08-19T00:00:00.000Z",
+        })}\n`,
+        "utf8",
+      );
+
+      const optedIn = await getCoverageMatrix(configPath, channelId);
+      expect(
+        optedIn.entries.find(
+          (entry) => entry.capability === "analytics.revenue",
+        ),
+      ).toMatchObject({
+        status: "estimated",
+        dataAsOf: "2026-08-19T00:00:00.000Z",
+        evidencePaths: ["evidence-revenue.json"],
+      });
+      expect(JSON.stringify(optedIn)).not.toContain("access-token");
+    } finally {
+      await cleanupFixture(root, configPath);
+      await rmdir(join(analyticsRoot, "evidence")).catch(() => undefined);
+      await unlink(join(analyticsRoot, "sync-state.json")).catch(
+        () => undefined,
+      );
+      await unlink(join(analyticsRoot, "data.json")).catch(() => undefined);
+      await rmdir(analyticsRoot).catch(() => undefined);
+      await rmdir(join(root, ".ytops-data", "analytics")).catch(
+        () => undefined,
+      );
+    }
+  });
+
   it("同一频道存在多个接入时保持覆盖查询成功且不猜测 Inventory 身份", async () => {
     const root = await mkdtemp(join(tmpdir(), "ytops-coverage-"));
     const configPath = join(root, "config.json");

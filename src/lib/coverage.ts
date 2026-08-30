@@ -183,6 +183,13 @@ export async function getCoverageMatrix(
         : retention.state.status === "completed"
           ? "partial"
           : "unavailable";
+  const revenueStatus: CoverageMatrixStatus = !analytics.state.revenueOptIn
+    ? "qualification-limited"
+    : analytics.data.channelRows.some(
+          (row) => "estimatedRevenue" in row.metrics,
+        )
+      ? "estimated"
+      : "unavailable";
 
   return {
     channelId,
@@ -232,6 +239,26 @@ export async function getCoverageMatrix(
         evidencePaths: safeEvidencePaths(
           analytics.data.evidence
             .filter((evidence) => evidence.phase === "audience")
+            .map((evidence) => evidence.path),
+        ),
+      },
+      {
+        capability: "analytics.revenue",
+        source: analytics.data.source,
+        status: revenueStatus,
+        scope: "总收入与 RPM（美元）；未 opt-in 时资格受限，绝不伪装零值",
+        ...(analytics.state.revenueOptIn === true &&
+        analytics.data.dataAsOf !== undefined
+          ? { dataAsOf: analytics.data.dataAsOf }
+          : {}),
+        ...(analytics.state.revenueOptIn === true
+          ? {}
+          : { reason: "货币分析权限未显式 opt-in（ADR 0003）。" }),
+        evidencePaths: safeEvidencePaths(
+          analytics.data.evidence
+            .filter((evidence) =>
+              evidence.request.metrics.includes("estimatedRevenue"),
+            )
             .map((evidence) => evidence.path),
         ),
       },

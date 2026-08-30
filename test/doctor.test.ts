@@ -1,5 +1,12 @@
+import { mkdtemp, rmdir, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runDoctor } from "../src/lib/doctor.js";
+import {
+  initializeChannelOperationsConfig,
+  updateGlobalChannelOperationsConfig,
+} from "../src/lib/config.js";
 import type { CommandResult } from "../src/lib/process.js";
 
 describe("external tool diagnostics", () => {
@@ -171,6 +178,30 @@ describe("cookie access defaults", () => {
       } else {
         delete process.env.YTOPS_YTDLP_COOKIES_FILE;
       }
+    }
+  });
+});
+
+describe("revenue opt-in status", () => {
+  it("未提供运营配置时报告 not-configured", async () => {
+    const report = await runDoctor();
+    expect(report.safeDefaults.analyticsRevenueOptIn).toBe("not-configured");
+  });
+
+  it("配置显式 opt-in 后报告 opted-in，只报状态不报值", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-doctor-"));
+    const configPath = join(root, "config.json");
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      await updateGlobalChannelOperationsConfig(configPath, {
+        analytics: { revenueOptIn: true },
+      });
+      const report = await runDoctor({ operationsConfigPath: configPath });
+      expect(report.safeDefaults.analyticsRevenueOptIn).toBe("opted-in");
+      expect(JSON.stringify(report)).not.toContain('"revenueOptIn"');
+    } finally {
+      await unlink(configPath).catch(() => undefined);
+      await rmdir(root).catch(() => undefined);
     }
   });
 });

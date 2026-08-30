@@ -1,4 +1,8 @@
 import {
+  hasAnyRevenueOptIn,
+  validateChannelOperationsConfig,
+} from "./config.js";
+import {
   createCommandLaunchFailure,
   runCommand,
   type CommandRunner,
@@ -16,6 +20,7 @@ export interface ToolCheck {
 
 export interface DoctorOptions {
   runner?: CommandRunner;
+  operationsConfigPath?: string;
 }
 
 async function checkCommand(
@@ -114,12 +119,28 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<{
     Boolean(process.env.YTOPS_YTDLP_COOKIES_FILE?.trim()) ||
     Boolean(process.env.YTOPS_YTDLP_COOKIES_FROM_BROWSER?.trim());
 
+  // 只报告 opt-in 状态，不读取或输出任何配置值（ADR 0003）。
+  let analyticsRevenueOptIn = "not-configured";
+  if (options.operationsConfigPath !== undefined) {
+    try {
+      const { config } = await validateChannelOperationsConfig(
+        options.operationsConfigPath,
+      );
+      analyticsRevenueOptIn = hasAnyRevenueOptIn(config)
+        ? "opted-in"
+        : "not-configured";
+    } catch {
+      analyticsRevenueOptIn = "not-configured";
+    }
+  }
+
   return {
     tools,
     safeDefaults: {
       YTDLP_IGNORE_CONFIG: "1",
       cookieAccess: cookieSourceConfigured ? "environment-opt-in" : "disabled",
       oauthWriteAccess: "not configured",
+      analyticsRevenueOptIn,
     },
   };
 }
