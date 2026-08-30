@@ -106,115 +106,121 @@ const completedData = {
 
 describe("CLI 留存曲线", () => {
   it("retention-status 以稳定 JSON 输出同步状态、检查点和数据截至时间", () => {
-    withRetentionCliFixture(({ configPath, writeRetentionState, writeRetentionData }) => {
-      writeRetentionState(completedState);
-      writeRetentionData(completedData);
+    withRetentionCliFixture(
+      ({ configPath, writeRetentionState, writeRetentionData }) => {
+        writeRetentionState(completedState);
+        writeRetentionData(completedData);
 
-      const result = runCli([
-        "--json",
-        "ops",
-        "channel",
-        "retention-status",
-        "--config",
-        configPath,
-        "--channel",
-        channelId,
-      ]);
-      expect(result.status).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        ok: true,
-        data: {
+        const result = runCli([
+          "--json",
+          "ops",
+          "channel",
+          "retention-status",
+          "--config",
+          configPath,
+          "--channel",
           channelId,
-          state: {
-            status: "completed",
-            coverage: "complete",
-            completedVideoIds: ["video-001"],
-            pendingVideoIds: [],
-            dataAsOf: "2026-08-19T00:00:00.000Z",
-          },
+        ]);
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          ok: true,
           data: {
-            coverage: "complete",
-            dataAsOf: "2026-08-19T00:00:00.000Z",
-            curves: [
-              {
-                videoId: "video-001",
-                points: [
-                  { elapsedVideoTimeRatio: 0.01, audienceWatchRatio: 1.18 },
-                  { elapsedVideoTimeRatio: 0.02, audienceWatchRatio: 0.98 },
-                ],
-              },
-            ],
+            channelId,
+            state: {
+              status: "completed",
+              coverage: "complete",
+              completedVideoIds: ["video-001"],
+              pendingVideoIds: [],
+              dataAsOf: "2026-08-19T00:00:00.000Z",
+            },
+            data: {
+              coverage: "complete",
+              dataAsOf: "2026-08-19T00:00:00.000Z",
+              curves: [
+                {
+                  videoId: "video-001",
+                  points: [
+                    { elapsedVideoTimeRatio: 0.01, audienceWatchRatio: 1.18 },
+                    { elapsedVideoTimeRatio: 0.02, audienceWatchRatio: 0.98 },
+                  ],
+                },
+              ],
+            },
           },
-        },
-      });
-    });
+        });
+      },
+    );
   });
 
   it("retention-read 返回单个视频的全历史留存曲线并如实呈现超过 100% 的点", () => {
-    withRetentionCliFixture(({ configPath, writeRetentionState, writeRetentionData }) => {
-      writeRetentionState(completedState);
-      writeRetentionData(completedData);
+    withRetentionCliFixture(
+      ({ configPath, writeRetentionState, writeRetentionData }) => {
+        writeRetentionState(completedState);
+        writeRetentionData(completedData);
 
-      const result = runCli([
-        "--json",
-        "ops",
-        "channel",
-        "retention-read",
-        "--config",
-        configPath,
-        "--channel",
-        channelId,
-        "--video",
-        "video-001",
-      ]);
-      expect(result.status).toBe(0);
-      expect(result.stderr).toBe("");
-      const payload = JSON.parse(result.stdout);
-      expect(payload).toMatchObject({
-        ok: true,
-        data: {
+        const result = runCli([
+          "--json",
+          "ops",
+          "channel",
+          "retention-read",
+          "--config",
+          configPath,
+          "--channel",
           channelId,
-          videoId: "video-001",
-          mode: "cached",
-          stale: true,
-          dataAsOf: "2026-08-19T00:00:00.000Z",
-          curve: {
+          "--video",
+          "video-001",
+        ]);
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe("");
+        const payload = JSON.parse(result.stdout);
+        expect(payload).toMatchObject({
+          ok: true,
+          data: {
+            channelId,
             videoId: "video-001",
-            points: [
-              { elapsedVideoTimeRatio: 0.01, audienceWatchRatio: 1.18 },
-              { elapsedVideoTimeRatio: 0.02, audienceWatchRatio: 0.98 },
-            ],
+            mode: "cached",
+            stale: true,
+            dataAsOf: "2026-08-19T00:00:00.000Z",
+            curve: {
+              videoId: "video-001",
+              points: [
+                { elapsedVideoTimeRatio: 0.01, audienceWatchRatio: 1.18 },
+                { elapsedVideoTimeRatio: 0.02, audienceWatchRatio: 0.98 },
+              ],
+            },
+            refresh: { attempted: false, status: "not-requested" },
           },
-          refresh: { attempted: false, status: "not-requested" },
-        },
-      });
-    });
+        });
+      },
+    );
   });
 
   it("retention-read 对缺失曲线的失败不伪装成事实", () => {
-    withRetentionCliFixture(({ configPath, writeRetentionState, writeRetentionData }) => {
-      writeRetentionState(completedState);
-      writeRetentionData(completedData);
+    withRetentionCliFixture(
+      ({ configPath, writeRetentionState, writeRetentionData }) => {
+        writeRetentionState(completedState);
+        writeRetentionData(completedData);
 
-      const result = runCli([
-        "--json",
-        "ops",
-        "channel",
-        "retention-read",
-        "--config",
-        configPath,
-        "--channel",
-        channelId,
-        "--video",
-        "video-404",
-      ]);
-      expect(result.status).toBe(1);
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        ok: false,
-        error: { code: "RETENTION_SERVICE" },
-      });
-    });
+        const result = runCli([
+          "--json",
+          "ops",
+          "channel",
+          "retention-read",
+          "--config",
+          configPath,
+          "--channel",
+          channelId,
+          "--video",
+          "video-404",
+        ]);
+        expect(result.status).toBe(1);
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          ok: false,
+          error: { code: "RETENTION_SERVICE" },
+        });
+      },
+    );
   });
 
   it("retention-sync 在尚无已完成的视频清单时返回失败", () => {

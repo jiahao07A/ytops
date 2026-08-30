@@ -168,7 +168,10 @@ function parseRetentionPage(
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
   const points: RetentionPoint[] = [];
   for (const rawRow of rows) {
-    if (!Array.isArray(rawRow) || rawRow.length <= Math.max(dimensionIndex, metricIndex)) {
+    if (
+      !Array.isArray(rawRow) ||
+      rawRow.length <= Math.max(dimensionIndex, metricIndex)
+    ) {
       throw new RetentionServiceError(
         "官方留存曲线返回的行数据无效。",
         "invalid-response",
@@ -211,7 +214,9 @@ function parseRetentionPage(
   return {
     points,
     ...(nextStartIndex === undefined ? {} : { nextStartIndex }),
-    ...(typeof payload.dataAsOf === "string" ? { dataAsOf: payload.dataAsOf } : {}),
+    ...(typeof payload.dataAsOf === "string"
+      ? { dataAsOf: payload.dataAsOf }
+      : {}),
   };
 }
 
@@ -277,11 +282,7 @@ function extractApiReason(payload: unknown): string | undefined {
 }
 
 export type RetentionRunStatus =
-  | "not-started"
-  | "running"
-  | "partial"
-  | "completed"
-  | "failed";
+  "not-started" | "running" | "partial" | "completed" | "failed";
 
 export interface RetentionCurveRecord {
   videoId: string;
@@ -573,7 +574,8 @@ function mergedCurveCoverage(
   const complete = curves.filter((curve) => curve.coverage === "complete");
   const missing = curves.filter(
     (curve) =>
-      curve.coverage === "unavailable" || curve.coverage === "permission-denied",
+      curve.coverage === "unavailable" ||
+      curve.coverage === "permission-denied",
   );
   if (complete.length === curves.length) {
     return "complete";
@@ -794,7 +796,11 @@ export async function syncRetention(
     retentionStateSchema,
   );
   const endDate = toDateOnly(nowFactory());
-  const data = await loadJson(paths.data, defaultData(previousState), retentionDataSchema);
+  const data = await loadJson(
+    paths.data,
+    defaultData(previousState),
+    retentionDataSchema,
+  );
   const state: RetentionSyncState = {
     ...previousState,
     status: "running",
@@ -868,7 +874,11 @@ export async function getRetentionStatus(
     defaultState(channelId, new Date().toISOString()),
     retentionStateSchema,
   );
-  const data = await loadJson(paths.data, defaultData(state), retentionDataSchema);
+  const data = await loadJson(
+    paths.data,
+    defaultData(state),
+    retentionDataSchema,
+  );
   return { channelId, state, data };
 }
 
@@ -943,9 +953,7 @@ function supportedRetentionKind(kind: string): RetentionFailureKind {
     : "network";
 }
 
-function failureFromState(
-  state: RetentionSyncState,
-): RetentionServiceError {
+function failureFromState(state: RetentionSyncState): RetentionServiceError {
   const error = state.error;
   return new RetentionServiceError(
     error?.message ?? "留存曲线刷新未完成。",
@@ -1056,7 +1064,11 @@ export async function readRetentionCurve(
     defaultState(input.channelId, now.toISOString()),
     retentionStateSchema,
   );
-  const data = await loadJson(paths.data, defaultData(previousState), retentionDataSchema);
+  const data = await loadJson(
+    paths.data,
+    defaultData(previousState),
+    retentionDataSchema,
+  );
   const previousCurve = data.curves.find(
     (candidate) => candidate.videoId === videoId,
   );

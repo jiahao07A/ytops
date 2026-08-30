@@ -38,9 +38,14 @@ pwsh.exe -NoProfile -Command "rtk node .\dist\cli.js --json ops channel auth-sta
 pwsh.exe -NoProfile -Command "rtk node .\dist\cli.js --json ops channel auth-start --comments --config .\ytops-config.json"
 pwsh.exe -NoProfile -Command "rtk node .\dist\cli.js --json ops channel analytics-sync --config .\ytops-config.json --channel <channel-id>"
 pwsh.exe -NoProfile -Command "rtk node .\dist\cli.js --json ops channel analytics-read --config .\ytops-config.json --channel <channel-id> --refresh"
+pwsh.exe -NoProfile -Command "rtk node .\dist\cli.js --json ops channel retention-sync --config .\ytops-config.json --channel <channel-id>"
+pwsh.exe -NoProfile -Command "rtk node .\dist\cli.js --json ops channel retention-status --config .\ytops-config.json --channel <channel-id>"
+pwsh.exe -NoProfile -Command "rtk node .\dist\cli.js --json ops channel retention-read --config .\ytops-config.json --channel <channel-id> --video <video-id> --refresh"
 pwsh.exe -NoProfile -Command "rtk node .\dist\cli.js --json ops channel coverage --config .\ytops-config.json --channel <channel-id>"
 ```
 
 `analytics-read --latest` refuses stale fallback when refresh fails. `analytics-breakdown`, `reporting-sync` and `comments-sync` are read-only and expose qualification, asynchronous, partial and unavailable states instead of converting missing data to zero. Every stored evidence reference excludes OAuth credentials.
+
+Retention curves are the official single-video `audienceWatchRatio` metric across the `elapsedVideoTimeRatio` dimension: one query per video, roughly 100 fixed ratio points, and no channel-level curve exists. `retention-sync` queries each inventory video with a fixed earliest start date (2005-07-14); the official response defines the actual covered window, so no date-range flag is offered. The first run builds curves for every inventory video with a resumable per-video checkpoint; later runs only fetch newly discovered videos. Curved values above 100% (repeat or overlapping plays) are reported verbatim, and cells suppressed by the privacy threshold are omitted instead of being written as zero. `retention-read` returns one video's full-history curve from the last available data; `--refresh` falls back to stored data on failure, while `--latest` fails rather than returning stale curves.
 
 Use official user OAuth for private data and channel writes. Do not use a service account for an individual YouTube channel. Before a future write operation, show the channel, target resource, requested change, privacy state, and verification plan, then obtain explicit confirmation.

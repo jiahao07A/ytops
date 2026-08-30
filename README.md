@@ -30,6 +30,7 @@ README 只维护已交付 CLI、安装、验证和安全摘要。架构与安全
 | `ops channel analytics-sync/status/query`   | 回填、查询和检查核心 Analytics 事实                  | 官方 YouTube Analytics API + 本机仓库 |
 | `ops channel analytics-read`                | 读取最后可用数据、刷新或强制最新                     | Analytics 新鲜度合同                  |
 | `ops channel analytics-breakdown`           | 按临时口径查询高维细分                               | 受校验的 Analytics 配置               |
+| `ops channel retention-sync/status/read`    | 同步和读取单个视频的全历史留存曲线，支持断点续传     | 官方 YouTube Analytics API + 本机仓库 |
 | `ops channel reporting-sync/status`         | 请求、等待和导入异步 Reporting 报告                  | 官方 Reporting 适配层                 |
 | `ops channel comments-sync/status`          | 只读同步评论并查询检查点                             | 官方 YouTube Data API                 |
 | `ops channel coverage`                      | 输出覆盖矩阵、限制原因和证据入口                     | 本机仓库审计                          |
@@ -79,10 +80,12 @@ node .\dist\cli.js --json ops channel sync --config .\ytops-config.json --channe
 node .\dist\cli.js --json ops channel sync-status --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX
 node .\dist\cli.js --json ops channel analytics-sync --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX
 node .\dist\cli.js --json ops channel analytics-read --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX --refresh
+node .\dist\cli.js --json ops channel retention-sync --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX
+node .\dist\cli.js --json ops channel retention-read --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX --video VIDEO_ID_11
 node .\dist\cli.js --json ops channel coverage --config .\ytops-config.json --channel UCXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-同步会保存规范化数据、原始 API 证据和分页检查点。Analytics 默认回填最近 365 天，最多 3650 天；源站失败时普通读取返回带过期标记的最后可用数据，`--latest` 失败则不回退。Reporting、评论和覆盖矩阵均保持只读，任何频道写入仍不在当前范围内。
+同步会保存规范化数据、原始 API 证据和分页检查点。Analytics 默认回填最近 365 天，最多 3650 天；源站失败时普通读取返回带过期标记的最后可用数据，`--latest` 失败则不回退。留存曲线以固定最早起点（2005-07-14）对单个视频发起官方查询，由官方返回实际覆盖的约 100 个进度比例点；首次留存同步处理库存全部视频并支持断点续传，之后每轮只处理新发现的视频；超过 100% 的留存点如实呈现，隐私阈值造成的空单元格省略而非置零。Reporting、评论和覆盖矩阵均保持只读，任何频道写入仍不在当前范围内。
 
 下载必须显式表明你拥有内容权利或已经得到授权，并提供明确的输出目录：
 
