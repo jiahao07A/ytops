@@ -26,6 +26,7 @@ import {
   OAuthServiceError,
   CommentsServiceError,
   ReportingServiceError,
+  RetentionServiceError,
   UserInputError,
 } from "./lib/errors.js";
 import {
@@ -69,6 +70,12 @@ import {
   syncAnalytics,
 } from "./lib/analytics.js";
 import { readAnalyticsFacts } from "./lib/freshness.js";
+import {
+  getRetentionStatus,
+  GoogleRetentionProvider,
+  readRetentionCurve,
+  syncRetention,
+} from "./lib/retention.js";
 import {
   queryBreakdown,
   readBreakdownResult,
@@ -724,6 +731,13 @@ function readableError(error: unknown): ErrorPayload["error"] {
     };
   }
   if (error instanceof CommentsServiceError) {
+    return {
+      code: error.code,
+      message: safeErrorMessage(error.message),
+      details: `类别：${error.kind}；可重试：${error.retryable ? "是" : "否"}`,
+    };
+  }
+  if (error instanceof RetentionServiceError) {
     return {
       code: error.code,
       message: safeErrorMessage(error.message),
@@ -1642,6 +1656,75 @@ channelOperations
     execute("频道评论状态", () =>
       getCommentsStatus(options.config, options.channel),
     ),
+  );
+
+channelOperations
+  .command("retention-sync")
+  .description("同步库存视频的全历史留存曲线，首次全量、之后仅新增视频")
+  .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
+  .requiredOption("--channel <channel-id>", "要同步的已接入频道 ID")
+  .action(async (options: { config: string; channel: string }) =>
+    execute("频道留存曲线同步", () =>
+      syncRetention(
+        options.config,
+        { channelId: options.channel },
+        { provider: new GoogleRetentionProvider() },
+      ),
+    ),
+  );
+
+channelOperations
+  .command("retention-status")
+  .description("查询留存曲线同步状态、检查点和数据截至时间")
+  .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
+  .requiredOption("--channel <channel-id>", "要查询的已接入频道 ID")
+  .action(async (options: { config: string; channel: string }) =>
+    execute("频道留存曲线状态", () =>
+      getRetentionStatus(options.config, options.channel),
+    ),
+  );
+
+channelOperations
+  .command("retention-read")
+  .description("读取单个视频的全历史留存曲线，或刷新/强制最新")
+  .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
+  .requiredOption("--channel <channel-id>", "要读取的已接入频道 ID")
+  .requiredOption("--video <video-id>", "单个视频 ID")
+  .option("--refresh", "先尝试源站刷新；失败时返回最后可用数据并标记过期")
+  .option("--latest", "要求本次源站刷新成功；失败时不回退到旧数据")
+  .option("--max-age-hours <hours>", "判定缓存过期的小时数，默认 24")
+  .action(
+    async (options: {
+      config: string;
+      channel: string;
+      video: string;
+      refresh?: boolean;
+      latest?: boolean;
+      maxAgeHours?: string;
+    }) => {
+      if (options.refresh && options.latest) {
+        throw new UserInputError("--refresh 与 --latest 只能选择一个。 ");
+      }
+      const mode = options.latest
+        ? "latest"
+        : options.refresh
+          ? "refresh"
+          : "cached";
+      return execute("视频留存曲线", () =>
+        readRetentionCurve(
+          options.config,
+          {
+            channelId: options.channel,
+            videoId: options.video,
+            mode,
+            ...(options.maxAgeHours === undefined
+              ? {}
+              : { maxAgeHours: Number(options.maxAgeHours) }),
+          },
+          {},
+        ),
+      );
+    },
   );
 
 channelOperations
