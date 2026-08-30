@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { initializeChannelOperationsConfig } from "../src/lib/config.js";
+import {
+  initializeChannelOperationsConfig,
+  updateGlobalChannelOperationsConfig,
+} from "../src/lib/config.js";
 import {
   queryBreakdown,
   validateBreakdownQuery,
@@ -143,6 +146,72 @@ describe("高维 Analytics 配置档案", () => {
       coverage: "permission-denied",
     });
     expect(called).toBe(false);
+  });
+
+  it("货币权限未 opt-in 时本地拒绝按需收入查询；开启后正常请求", async () => {
+    let called = false;
+    await withBreakdownFixture(async ({ configPath, store }) => {
+      const denied = await queryBreakdown(
+        configPath,
+        {
+          channelId,
+          profile: {
+            metrics: ["estimatedRevenue"],
+            dimensions: ["day"],
+            startDate: "2026-08-01",
+            endDate: "2026-08-01",
+            filters: {},
+          },
+        },
+        {
+          credentialStore: store,
+          provider: {
+            query: async () => {
+              called = true;
+              return { rows: [], raw: {} };
+            },
+          },
+        },
+      );
+      expect(denied).toMatchObject({
+        success: false,
+        coverage: "permission-denied",
+      });
+      expect(denied.reason).toContain("opt-in");
+      expect(called).toBe(false);
+
+      await updateGlobalChannelOperationsConfig(configPath, {
+        analytics: { revenueOptIn: true },
+      });
+      const allowed = await queryBreakdown(
+        configPath,
+        {
+          channelId,
+          profile: {
+            metrics: ["estimatedRevenue"],
+            dimensions: ["day"],
+            startDate: "2026-08-01",
+            endDate: "2026-08-01",
+            filters: {},
+          },
+        },
+        {
+          credentialStore: store,
+          provider: {
+            query: async () => ({
+              rows: [
+                {
+                  dimensions: { day: "2026-08-01" },
+                  metrics: { estimatedRevenue: 1.5 },
+                },
+              ],
+              raw: {},
+            }),
+          },
+        },
+      );
+      expect(allowed).toMatchObject({ success: true, coverage: "estimated" });
+    });
   });
 
   it("注入官方适配器后执行真实查询路径", async () => {

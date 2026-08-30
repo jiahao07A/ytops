@@ -252,7 +252,12 @@ export async function getCoverageMatrix(
           ? { dataAsOf: analytics.data.dataAsOf }
           : {}),
         ...(analytics.state.revenueOptIn === true
-          ? {}
+          ? revenueStatus === "unavailable"
+            ? {
+                reason:
+                  "已开启货币 opt-in 但未取得收入行：请确认频道变现资格并完成真实频道探针（ADR 0003）。",
+              }
+            : {}
           : { reason: "货币分析权限未显式 opt-in（ADR 0003）。" }),
         evidencePaths: safeEvidencePaths(
           analytics.data.evidence

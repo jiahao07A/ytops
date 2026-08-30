@@ -14,28 +14,28 @@ README 只维护已交付 CLI、安装、验证和安全摘要。架构与安全
 
 ## 当前能力
 
-| 命令                                        | 作用                                                          | 外部工具                              |
-| ------------------------------------------- | ------------------------------------------------------------- | ------------------------------------- |
-| `doctor`                                    | 检查必需与可选工具，以及安全默认值                            | `yt-dlp`、FFmpeg 等                   |
-| `search`                                    | 搜索公开视频并返回精简 JSON                                   | `yt-dlp`                              |
-| `inspect`                                   | 读取单视频元数据，不下载媒体                                  | `yt-dlp`                              |
-| `captions list`                             | 查看人工/自动字幕语言                                         | `yt-dlp`                              |
-| `captions fetch`                            | 将已获授权的字幕写入指定目录                                  | `yt-dlp`                              |
-| `download video/audio`                      | 下载已获授权的媒体                                            | `yt-dlp` + FFmpeg                     |
-| `process probe/audio/clip`                  | 探测、抽音频、裁剪本地媒体                                    | FFmpeg / ffprobe                      |
-| `ops doctor`                                | 检查官方 OAuth 运营接入的环境，不执行授权或 API 请求          | 可选发布工具 + 环境变量               |
-| `ops channel auth-start/auth-complete`      | 启动并完成只读 OAuth，展示可访问频道，不输出令牌              | 官方 OAuth + YouTube Data API         |
-| `ops channel list/status/select`            | 查看接入状态并显式选择目标频道                                | 本机状态 + 受保护凭据                 |
-| `ops channel sync/sync-status`              | 同步或查询频道、上传播放列表和视频元数据                      | 官方 YouTube Data API + 本机仓库      |
-| `ops channel analytics-sync/status/query`   | 回填、查询和检查核心 Analytics 事实                           | 官方 YouTube Analytics API + 本机仓库 |
-| `ops channel analytics-read`                | 读取最后可用数据、刷新或强制最新                              | Analytics 新鲜度合同                  |
-| `ops channel analytics-breakdown`           | 按临时口径查询高维细分                                        | 受校验的 Analytics 配置               |
-| `ops channel retention-sync/status/read`    | 同步和读取单个视频的全历史留存曲线，支持断点续传              | 官方 YouTube Analytics API + 本机仓库 |
+| 命令                                        | 作用                                                                | 外部工具                              |
+| ------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------- |
+| `doctor`                                    | 检查必需与可选工具，以及安全默认值                                  | `yt-dlp`、FFmpeg 等                   |
+| `search`                                    | 搜索公开视频并返回精简 JSON                                         | `yt-dlp`                              |
+| `inspect`                                   | 读取单视频元数据，不下载媒体                                        | `yt-dlp`                              |
+| `captions list`                             | 查看人工/自动字幕语言                                               | `yt-dlp`                              |
+| `captions fetch`                            | 将已获授权的字幕写入指定目录                                        | `yt-dlp`                              |
+| `download video/audio`                      | 下载已获授权的媒体                                                  | `yt-dlp` + FFmpeg                     |
+| `process probe/audio/clip`                  | 探测、抽音频、裁剪本地媒体                                          | FFmpeg / ffprobe                      |
+| `ops doctor`                                | 检查官方 OAuth 运营接入的环境，不执行授权或 API 请求                | 可选发布工具 + 环境变量               |
+| `ops channel auth-start/auth-complete`      | 启动并完成只读 OAuth，展示可访问频道，不输出令牌                    | 官方 OAuth + YouTube Data API         |
+| `ops channel list/status/select`            | 查看接入状态并显式选择目标频道                                      | 本机状态 + 受保护凭据                 |
+| `ops channel sync/sync-status`              | 同步或查询频道、上传播放列表和视频元数据                            | 官方 YouTube Data API + 本机仓库      |
+| `ops channel analytics-sync/status/query`   | 回填、查询和检查核心 Analytics 事实                                 | 官方 YouTube Analytics API + 本机仓库 |
+| `ops channel analytics-read`                | 读取最后可用数据、刷新或强制最新                                    | Analytics 新鲜度合同                  |
+| `ops channel analytics-breakdown`           | 按临时口径查询高维细分                                              | 受校验的 Analytics 配置               |
+| `ops channel retention-sync/status/read`    | 同步和读取单个视频的全历史留存曲线，支持断点续传                    | 官方 YouTube Analytics API + 本机仓库 |
 | `ops channel reporting-sync/status/read`    | 请求、等待和导入异步 Reporting 报告，按报告类型分别保存、查询与读取 | 官方 Reporting 适配层                 |
-| `ops channel comments-sync/status`          | 只读同步评论并查询检查点                                      | 官方 YouTube Data API                 |
-| `ops channel coverage`                      | 输出覆盖矩阵、限制原因和证据入口                              | 本机仓库审计                          |
-| `config init/validate/explain`              | 初始化、校验和解释本地运营配置                                | 本地 JSON + 配置校验                  |
-| `config set-global/set-channel/set-profile` | 直接持久化三层配置覆盖；确认由调用方编排                      | 本地 JSON + 原子写入                  |
+| `ops channel comments-sync/status`          | 只读同步评论并查询检查点                                            | 官方 YouTube Data API                 |
+| `ops channel coverage`                      | 输出覆盖矩阵、限制原因和证据入口                                    | 本机仓库审计                          |
+| `config init/validate/explain`              | 初始化、校验和解释本地运营配置                                      | 本地 JSON + 配置校验                  |
+| `config set-global/set-channel/set-profile` | 直接持久化三层配置覆盖；确认由调用方编排                            | 本地 JSON + 原子写入                  |
 
 ## 快速开始
 

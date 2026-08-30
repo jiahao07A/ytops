@@ -1487,6 +1487,7 @@ channelOperations
               data: {
                 ...result.data,
                 derivedRows: deriveAnalyticsFacts(result.data.channelRows),
+                derivedVideoRows: deriveAnalyticsFacts(result.data.videoRows),
               },
             }
           : result;
@@ -1841,7 +1842,7 @@ operations
         process.env.YTOPS_YTDLP_COOKIES_FROM_BROWSER?.trim(),
       ),
       guidance:
-        "频道读取、Analytics、上传和更新必须走官方 YouTube API/OAuth，并在每个写操作前提供目标与预览确认。公开检索 cookie 默认不读取；显式 opt-in 时建议使用导出的 cookie 文件或 firefox（Windows 上 Chrome/Edge 受 App-Bound Encryption 限制），并使用专用小号以降低账号风控风险。",
+        "频道读取、Analytics、上传和更新必须走官方 YouTube API/OAuth，并在每个写操作前提供目标与预览确认。公开检索 cookie 默认不读取；显式 opt-in 时建议使用导出的 cookie 文件或 firefox（Windows 上 Chrome/Edge 受 App-Bound Encryption 限制），并使用专用小号以降低账号风控风险。货币分析权限仅在配置显式 opt-in 并重新授权后可用，收入可用性还取决于频道变现资格，以真实频道探针为准（ADR 0003）。",
       ...(await runDoctor({
         ...(options.config === undefined
           ? {}

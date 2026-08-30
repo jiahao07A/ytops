@@ -14,6 +14,7 @@ import {
   SUPPORTED_ANALYSIS_DIMENSIONS,
 } from "./analytics-catalog.js";
 import {
+  resolveRevenueOptIn,
   validateChannelOperationsConfig,
   updateAnalysisProfileOperationsConfig,
 } from "./config.js";
@@ -303,6 +304,21 @@ export async function queryBreakdown(
       reason: "当前频道不具备收入 Analytics 资格，结果不会伪装成零值。",
       rows: [],
     };
+  }
+  if (query.metrics.includes(REVENUE_ESTIMATE_METRIC)) {
+    const { config } = await validateChannelOperationsConfig(configPath);
+    if (!resolveRevenueOptIn(config, input.channelId)) {
+      return {
+        success: false,
+        channelId: input.channelId,
+        source: "youtube-analytics-api",
+        query,
+        coverage: "permission-denied",
+        reason:
+          "货币分析权限未显式 opt-in（ADR 0003），收入查询在本地拒绝，不伪装成零值。",
+        rows: [],
+      };
+    }
   }
   const paths = await resolvePaths(configPath, input.channelId, query);
   try {

@@ -227,6 +227,7 @@ describe("CLI 频道核心 Analytics", () => {
                 },
               },
             ],
+            derivedVideoRows: [],
           },
         },
       });
