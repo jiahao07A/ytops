@@ -91,6 +91,7 @@ export class GoogleReportingProvider implements ReportingProvider {
       },
       body: JSON.stringify({
         reportTypeId: input.reportType,
+        name: `ytops-${input.reportType}`,
         ...(input.startDate === undefined
           ? {}
           : { startDate: input.startDate }),
@@ -98,6 +99,33 @@ export class GoogleReportingProvider implements ReportingProvider {
       }),
     });
     const payload = await readJson(response);
+    if (response.status === 409) {
+      // 同报表类型的任务已存在：复用现有 Job，而不是让同步失败。
+      const existing = await this.fetcher(`${REPORTING_ENDPOINT}/jobs`, {
+        headers: { authorization: `Bearer ${input.accessToken}` },
+      });
+      const existingPayload = await readJson(existing);
+      if (!existing.ok) {
+        throw classifyReportingError(existing.status, existingPayload);
+      }
+      const jobs = isRecord(existingPayload) &&
+        Array.isArray(existingPayload.jobs)
+          ? existingPayload.jobs
+          : [];
+      const match = jobs
+        .filter(isRecord)
+        .find((job) => job.reportTypeId === input.reportType);
+      const reusedId =
+        isRecord(match) && typeof match.id === "string" ? match.id : undefined;
+      if (reusedId === undefined) {
+        throw new ReportingServiceError(
+          "Reporting 任务已存在但无法从官方 API 取回 Job ID。",
+          "invalid-response",
+          false,
+        );
+      }
+      return { jobId: reusedId, raw: match };
+    }
     if (!response.ok) throw classifyReportingError(response.status, payload);
     const jobId =
       isRecord(payload) && typeof payload.id === "string"

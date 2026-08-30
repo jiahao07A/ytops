@@ -443,6 +443,45 @@ describe("异步 Reporting 数据源", () => {
     });
   });
 
+  it("任务已存在(409)时改查现有任务复用 Job ID，且创建请求携带 name", async () => {
+    let sawName: string | undefined;
+    const provider = new GoogleReportingProvider(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/jobs") && init?.method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string };
+        sawName = body.name;
+        return Response.json(
+          {
+            error: {
+              code: 409,
+              message: "Requested entity already exists",
+              status: "ALREADY_EXISTS",
+            },
+          },
+          { status: 409 },
+        );
+      }
+      if (url.endsWith("/jobs")) {
+        return Response.json({
+          jobs: [
+            { id: "job-existing", reportTypeId: "channel_reach_basic_a1" },
+          ],
+        });
+      }
+      return Response.json(
+        { error: { message: "unexpected request" } },
+        { status: 500 },
+      );
+    });
+    const result = await provider.requestReport({
+      accessToken: "access-token",
+      channelId,
+      reportType: "channel_reach_basic_a1",
+    });
+    expect(result.jobId).toBe("job-existing");
+    expect(sawName).toContain("channel_reach_basic_a1");
+  });
+
   it("解析 reach 报表 CSV 的官方列并保留空单元格", async () => {
     const provider = new GoogleReportingProvider(async (input, init) => {
       const url = String(input);
