@@ -87,6 +87,8 @@ import {
   getReportingStatus,
   GoogleReportingProvider,
   listReportingResults,
+  readReportingRows,
+  REPORTING_REPORT_TYPES,
   syncReporting,
 } from "./lib/reporting.js";
 import {
@@ -1628,7 +1630,10 @@ channelOperations
   .description("请求、等待或导入异步 Reporting 报告")
   .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
   .requiredOption("--channel <channel-id>", "目标频道 ID")
-  .requiredOption("--report-type <type>", "官方报告类型")
+  .requiredOption(
+    "--report-type <type>",
+    `官方报告类型；已登记 reach 报表 ${REPORTING_REPORT_TYPES[0]}`,
+  )
   .option("--report-id <id>", "继续指定的报告 ID")
   .action(
     async (options: {
@@ -1679,6 +1684,33 @@ channelOperations
         }),
       );
     },
+  );
+
+channelOperations
+  .command("reporting-read")
+  .description(
+    "读取已导入的 Reporting 报表行，reach 报表返回规范化的曝光与点击率",
+  )
+  .requiredOption("-c, --config <path>", "已初始化的频道运营配置路径")
+  .requiredOption("--channel <channel-id>", "目标频道 ID")
+  .requiredOption(
+    "--report-type <type>",
+    `官方报告类型；已登记 reach 报表 ${REPORTING_REPORT_TYPES[0]}`,
+  )
+  .option("--video <video-id>", "只读取指定视频的行")
+  .action(
+    async (options: {
+      config: string;
+      channel: string;
+      reportType: string;
+      video?: string;
+    }) =>
+      execute("Reporting 数据读取", () =>
+        readReportingRows(options.config, options.channel, {
+          reportType: options.reportType,
+          ...(options.video === undefined ? {} : { videoId: options.video }),
+        }),
+      ),
   );
 
 channelOperations

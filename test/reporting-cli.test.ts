@@ -18,6 +18,7 @@ interface ReportingSlotFixture {
   reportType: string;
   jobId: string;
   status: "imported" | "failed";
+  rows: Array<Record<string, string | number>>;
 }
 
 /**
@@ -59,7 +60,7 @@ async function writeReportingSlots(
               },
             }),
         ...(imported ? { dataAsOf: "2026-08-19T00:00:00.000Z" } : {}),
-        rowCount: imported ? 1 : 0,
+        rowCount: imported ? fixture.rows.length : 0,
       })}\n`,
       "utf8",
     );
@@ -72,7 +73,7 @@ async function writeReportingSlots(
         jobId: fixture.jobId,
         reportId: fixture.jobId,
         reportType: fixture.reportType,
-        rows: imported ? [{ date: "2026-08-19", views: 5 }] : [],
+        rows: imported ? fixture.rows : [],
         evidence: [],
         ...(imported ? { dataAsOf: "2026-08-19T00:00:00.000Z" } : {}),
       })}\n`,
@@ -91,11 +92,13 @@ describe("CLI 异步 Reporting 状态", () => {
           reportType: "channel-basic",
           jobId: "job-basic-1",
           status: "imported",
+          rows: [{ date: "2026-08-19", views: 5 }],
         },
         {
           reportType: "channel-reach-basic",
           jobId: "job-reach-1",
           status: "failed",
+          rows: [],
         },
       ]);
       const initialized = runCli([
@@ -147,11 +150,13 @@ describe("CLI 异步 Reporting 状态", () => {
           reportType: "channel-reach-basic",
           jobId: "job-reach-1",
           status: "failed",
+          rows: [],
         },
         {
           reportType: "channel-basic",
           jobId: "job-basic-1",
           status: "imported",
+          rows: [{ date: "2026-08-19", views: 5 }],
         },
       ]);
       const initialized = runCli([
@@ -190,6 +195,149 @@ describe("CLI 异步 Reporting 状态", () => {
       expect(payload.data.reports.map((report) => report.state.status)).toEqual(
         ["imported", "failed"],
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("CLI 异步 Reporting 读取", () => {
+  it("读取 reach 报表返回规范化的曝光行，--video 过滤后只留该视频", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-reporting-read-"));
+    const configPath = join(root, "config.json");
+    try {
+      await writeReportingSlots(root, [
+        {
+          reportType: "channel_reach_basic_a1",
+          jobId: "job-reach-1",
+          status: "imported",
+          rows: [
+            {
+              date: "2026-08-19",
+              channel_id: channelId,
+              video_id: "v1",
+              video_thumbnail_impressions: "100",
+              video_thumbnail_impressions_ctr: "0.0523",
+            },
+            {
+              date: "2026-08-19",
+              channel_id: channelId,
+              video_id: "v2",
+              video_thumbnail_impressions: "40",
+              video_thumbnail_impressions_ctr: "5.25%",
+            },
+          ],
+        },
+      ]);
+      const initialized = runCli([
+        "--json",
+        "config",
+        "init",
+        "--output",
+        configPath,
+      ]);
+      expect(initialized.status).toBe(0);
+
+      const filtered = runCli([
+        "--json",
+        "ops",
+        "channel",
+        "reporting-read",
+        "-c",
+        configPath,
+        "--channel",
+        channelId,
+        "--report-type",
+        "channel_reach_basic_a1",
+        "--video",
+        "v2",
+      ]);
+      expect(filtered.status).toBe(0);
+      const filteredPayload = JSON.parse(filtered.stdout) as {
+        ok: boolean;
+        data: {
+          reportType: string;
+          status: string;
+          dataAsOf?: string;
+          rows: Array<Record<string, string>>;
+        };
+      };
+      expect(filteredPayload.ok).toBe(true);
+      expect(filteredPayload.data.reportType).toBe("channel_reach_basic_a1");
+      expect(filteredPayload.data.status).toBe("imported");
+      expect(filteredPayload.data.dataAsOf).toBe("2026-08-19T00:00:00.000Z");
+      expect(filteredPayload.data.rows).toEqual([
+        {
+          date: "2026-08-19",
+          channelId: "UC1111111111111111111111",
+          videoId: "v2",
+          impressions: "40",
+          ctr: "5.25%",
+        },
+      ]);
+
+      const unfiltered = runCli([
+        "--json",
+        "ops",
+        "channel",
+        "reporting-read",
+        "-c",
+        configPath,
+        "--channel",
+        channelId,
+        "--report-type",
+        "channel_reach_basic_a1",
+      ]);
+      expect(unfiltered.status).toBe(0);
+      const unfilteredPayload = JSON.parse(unfiltered.stdout) as {
+        data: { rows: unknown[] };
+      };
+      expect(unfilteredPayload.data.rows).toHaveLength(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("读取未登记报告类型时原样透传已保存行", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ytops-reporting-read-"));
+    const configPath = join(root, "config.json");
+    try {
+      await writeReportingSlots(root, [
+        {
+          reportType: "channel-basic",
+          jobId: "job-basic-1",
+          status: "imported",
+          rows: [{ date: "2026-08-19", views: 5 }],
+        },
+      ]);
+      const initialized = runCli([
+        "--json",
+        "config",
+        "init",
+        "--output",
+        configPath,
+      ]);
+      expect(initialized.status).toBe(0);
+
+      const result = runCli([
+        "--json",
+        "ops",
+        "channel",
+        "reporting-read",
+        "-c",
+        configPath,
+        "--channel",
+        channelId,
+        "--report-type",
+        "channel-basic",
+      ]);
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        ok: boolean;
+        data: { rows: Array<Record<string, string | number>> };
+      };
+      expect(payload.ok).toBe(true);
+      expect(payload.data.rows).toEqual([{ date: "2026-08-19", views: 5 }]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
