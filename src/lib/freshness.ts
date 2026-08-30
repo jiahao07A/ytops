@@ -35,7 +35,7 @@ export interface AnalyticsFactsReadInput {
   videoIds?: string[];
 }
 
-function isStale(
+export function isStale(
   dataAsOf: string | undefined,
   maxAgeHours: number,
   now: Date,
@@ -50,16 +50,30 @@ function isStale(
   );
 }
 
-function validateMaxAge(maxAgeHours: number | undefined): number {
+/**
+ * 共享的缓存新鲜度窗口校验：默认 24 小时，有效范围 1 到 8760 小时。
+ * 错误由调用方工厂提供，保持各模块自己的错误类型。
+ */
+export function validateMaxAgeHours(
+  maxAgeHours: number | undefined,
+  errors: { invalid: () => Error },
+): number {
   const value = maxAgeHours ?? 24;
   if (!Number.isFinite(value) || value <= 0 || value > 8_760) {
-    throw new AnalyticsServiceError(
-      "缓存新鲜度窗口必须在 0 到 8760 小时之间。",
-      "invalid-response",
-      false,
-    );
+    throw errors.invalid();
   }
   return value;
+}
+
+function validateMaxAge(maxAgeHours: number | undefined): number {
+  return validateMaxAgeHours(maxAgeHours, {
+    invalid: () =>
+      new AnalyticsServiceError(
+        "缓存新鲜度窗口必须在 1 到 8760 小时之间。",
+        "invalid-response",
+        false,
+      ),
+  });
 }
 
 function hasFacts(result: AnalyticsSyncResult): boolean {

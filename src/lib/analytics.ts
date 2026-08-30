@@ -1063,12 +1063,9 @@ function classifyAnalyticsResponseError(
     payload,
     httpErrorFactoriesFor(
       (message, kind, retryable) =>
-        new AnalyticsServiceError(
-          message,
-          kind as AnalyticsFailureKind,
-          retryable,
-        ),
+        new AnalyticsServiceError(message, kind, retryable),
       "Analytics",
+      { quota: "quota", network: "network" },
       () =>
         new AnalyticsServiceError(
           "Analytics OAuth 凭据无效或已过期，请重新完成授权。",

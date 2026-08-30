@@ -151,35 +151,36 @@ export class RetentionServiceError extends KindedServiceError {
   }
 }
 
-export interface HttpErrorFactories {
-  credential: () => Error;
-  quota: () => Error;
-  permission: () => Error;
-  rateLimited: () => Error;
-  serverUnavailable: () => Error;
-  requestFailed: () => Error;
+export interface HttpErrorFactories<E extends Error = Error> {
+  credential: () => E;
+  quota: () => E;
+  permission: () => E;
+  rateLimited: () => E;
+  serverUnavailable: () => E;
+  requestFailed: () => E;
 }
 
-export function httpErrorFactoriesFor<E extends KindedServiceError>(
-  create: (message: string, kind: string, retryable: boolean) => E,
+export function httpErrorFactoriesFor<K extends string, E extends Error>(
+  create: (message: string, kind: K, retryable: boolean) => E,
   label: string,
+  kinds: { quota: K; network: K },
   credential: () => E,
   permission: () => E,
-): HttpErrorFactories {
+): HttpErrorFactories<E> {
   return {
     credential,
     permission,
     quota: () =>
       create(
         `${label}官方 API 配额不足，请稍后重试或调整配额预算。`,
-        "quota",
+        kinds.quota,
         true,
       ),
-    rateLimited: () => create(`${label}请求触发配额限制。`, "quota", true),
+    rateLimited: () => create(`${label}请求触发配额限制。`, kinds.quota, true),
     serverUnavailable: () =>
-      create(`${label}官方 API 暂时不可用。`, "network", true),
+      create(`${label}官方 API 暂时不可用。`, kinds.network, true),
     requestFailed: () =>
-      create(`${label}官方 API 请求失败。`, "network", false),
+      create(`${label}官方 API 请求失败。`, kinds.network, false),
   };
 }
 
@@ -207,11 +208,11 @@ export function extractApiErrorReason(payload: unknown): string | undefined {
  * 官方 HTTP 错误的统一分类阶梯：401 凭据、403 配额/权限、429 限流、5xx 不可用。
  * 各数据模块用自己的错误工厂保持既有错误类型与文案。
  */
-export function classifyHttpResponseError(
+export function classifyHttpResponseError<E extends Error>(
   status: number,
   payload: unknown,
-  factories: HttpErrorFactories,
-): Error {
+  factories: HttpErrorFactories<E>,
+): E {
   const reason = extractApiErrorReason(payload);
   if (status === 401) {
     return factories.credential();

@@ -12,6 +12,7 @@ import {
   RetentionServiceError,
   UserInputError,
 } from "./errors.js";
+import { isStale, validateMaxAgeHours } from "./freshness.js";
 import {
   isFsCode,
   isRecord,
@@ -243,12 +244,9 @@ function classifyRetentionResponseError(
     payload,
     httpErrorFactoriesFor(
       (message, kind, retryable) =>
-        new RetentionServiceError(
-          message,
-          kind as RetentionFailureKind,
-          retryable,
-        ),
+        new RetentionServiceError(message, kind, retryable),
       "Analytics",
+      { quota: "quota", network: "network" },
       () =>
         new RetentionServiceError(
           "留存曲线 OAuth 凭据无效或已过期，请重新完成授权。",
@@ -853,22 +851,6 @@ export interface RetentionReadResult {
   };
 }
 
-function validateRetentionMaxAge(maxAgeHours: number | undefined): number {
-  const value = maxAgeHours ?? 24;
-  if (!Number.isFinite(value) || value <= 0 || value > 8_760) {
-    throw new UserInputError("缓存新鲜度窗口必须在 1 到 8760 小时之间。");
-  }
-  return value;
-}
-
-function isStale(dataAsOf: string, maxAgeHours: number, now: Date): boolean {
-  const timestamp = Date.parse(dataAsOf);
-  return (
-    Number.isNaN(timestamp) ||
-    now.getTime() - timestamp > maxAgeHours * 60 * 60 * 1000
-  );
-}
-
 function curveAsOf(curve: RetentionCurveRecord): string {
   return curve.dataAsOf ?? curve.fetchedAt;
 }
@@ -954,7 +936,10 @@ export async function readRetentionCurve(
     throw new UserInputError("必须提供要读取留存曲线的单个视频 ID。");
   }
   const mode = input.mode ?? "cached";
-  const maxAgeHours = validateRetentionMaxAge(input.maxAgeHours);
+  const maxAgeHours = validateMaxAgeHours(input.maxAgeHours, {
+    invalid: () =>
+      new UserInputError("缓存新鲜度窗口必须在 1 到 8760 小时之间。"),
+  });
   const nowFactory = dependencies.now ?? (() => new Date());
   const now = nowFactory();
 
