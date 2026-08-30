@@ -209,11 +209,11 @@ describe("频道核心 Analytics", () => {
         startIndex: 1,
       });
       expect(provider.queries[3]).toMatchObject({
-        dimensions: ["day", "country"],
-        metrics: viewerMetrics,
+        dimensions: ["country"],
+        metrics: ["views", "estimatedMinutesWatched"],
       });
       expect(provider.queries[4]).toMatchObject({
-        dimensions: ["day", "ageGroup", "gender"],
+        dimensions: ["ageGroup", "gender"],
         metrics: ["viewerPercentage"],
       });
       expect(provider.queries[5]).toMatchObject({

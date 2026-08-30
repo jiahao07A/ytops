@@ -46,9 +46,10 @@ export const MAX_ANALYTICS_BACKFILL_DAYS = 3_650;
 export const ANALYTICS_PAGE_SIZE = 200;
 export type AnalyticsPhase = "channel" | "video" | "audience" | "complete";
 
-// 观众画像数据默认同步的维度组：频道级×日，每组一次官方查询。
-// 官方对指标组合有硬约束：观看类指标不支持人口统计维度，人口统计报表
-// 只支持 viewerPercentage，因此每组携带各自的指标集（真实频道实测裁决）。
+// 观众画像数据默认同步的维度组，每组一次官方查询。组合以真实频道实测裁决：
+// 流量来源与订阅状态支持按天；地域与人口统计维度不支持 day，返回窗口聚合。
+// 指标组合同样有官方硬约束：观看类指标不进人口统计报表，人口统计报表
+// 只支持 viewerPercentage；地域报表不支持 engagedViews/averageViewDuration。
 const AUDIENCE_BREAKDOWN_GROUPS: Array<{
   dimensions: AnalyticsDimension[];
   metrics: AnalyticsMetric[];
@@ -57,9 +58,9 @@ const AUDIENCE_BREAKDOWN_GROUPS: Array<{
     dimensions: ["day", "trafficSourceType"],
     metrics: [...AUDIENCE_VIEWER_METRICS],
   },
-  { dimensions: ["day", "country"], metrics: [...AUDIENCE_VIEWER_METRICS] },
+  { dimensions: ["country"], metrics: ["views", "estimatedMinutesWatched"] },
   {
-    dimensions: ["day", "ageGroup", "gender"],
+    dimensions: ["ageGroup", "gender"],
     metrics: [AUDIENCE_VIEWER_PERCENTAGE_METRIC],
   },
   {
@@ -758,6 +759,7 @@ export async function syncAnalytics(
     }
   }
   let workUnits = 0;
+  let audienceGroupsFailed = 0;
   const canContinue = () =>
     input.maxWorkUnits === undefined || workUnits < input.maxWorkUnits;
   try {
@@ -967,6 +969,7 @@ export async function syncAnalytics(
         }
       } catch (error) {
         // 单个画像组的失败只降级画像覆盖状态，不影响已取得的核心事实。
+        audienceGroupsFailed += 1;
         const normalized = normalizeAnalyticsError(error);
         state = {
           ...state,
@@ -988,6 +991,15 @@ export async function syncAnalytics(
         await saveJsonFile(paths.state, state);
         workUnits += 1;
       }
+    }
+
+    // 部分组成功、部分组失败时，聚合覆盖按部分支持呈现，而不是最差值。
+    if (
+      audienceGroupsFailed > 0 &&
+      (data.audienceRows?.length ?? 0) > 0 &&
+      state.audienceCoverage === "unavailable"
+    ) {
+      state = { ...state, audienceCoverage: "partial" };
     }
 
     const complete = state.phase === "complete";
