@@ -116,3 +116,24 @@ export class CommentsServiceError extends Error {
     this.name = "CommentsServiceError";
   }
 }
+
+export type RetentionFailureKind =
+  | "quota"
+  | "network"
+  | "permission"
+  | "invalid-response"
+  | "credential"
+  | "not-ready";
+
+export class RetentionServiceError extends Error {
+  readonly code = "RETENTION_SERVICE";
+
+  constructor(
+    message: string,
+    readonly kind: RetentionFailureKind,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "RetentionServiceError";
+  }
+}
