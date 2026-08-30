@@ -131,7 +131,9 @@ export function validateBreakdownQuery(
   if (profile.metrics.includes(AUDIENCE_VIEWER_PERCENTAGE_METRIC)) {
     const demographic = profile.dimensions.some(
       (dimension) =>
-        dimension === "ageGroup" || dimension === "gender" || dimension === "video",
+        dimension === "ageGroup" ||
+        dimension === "gender" ||
+        dimension === "video",
     );
     if (!demographic) {
       throw new UserInputError(

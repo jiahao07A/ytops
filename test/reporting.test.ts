@@ -448,7 +448,9 @@ describe("异步 Reporting 数据源", () => {
     const provider = new GoogleReportingProvider(async (input, init) => {
       const url = String(input);
       if (url.endsWith("/jobs") && init?.method === "POST") {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { name?: string };
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          name?: string;
+        };
         sawName = body.name;
         return Response.json(
           {

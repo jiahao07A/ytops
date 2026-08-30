@@ -108,8 +108,8 @@ export class GoogleReportingProvider implements ReportingProvider {
       if (!existing.ok) {
         throw classifyReportingError(existing.status, existingPayload);
       }
-      const jobs = isRecord(existingPayload) &&
-        Array.isArray(existingPayload.jobs)
+      const jobs =
+        isRecord(existingPayload) && Array.isArray(existingPayload.jobs)
           ? existingPayload.jobs
           : [];
       const match = jobs
