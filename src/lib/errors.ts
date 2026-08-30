@@ -160,6 +160,29 @@ export interface HttpErrorFactories {
   requestFailed: () => Error;
 }
 
+export function httpErrorFactoriesFor<E extends KindedServiceError>(
+  create: (message: string, kind: string, retryable: boolean) => E,
+  label: string,
+  credential: () => E,
+  permission: () => E,
+): HttpErrorFactories {
+  return {
+    credential,
+    permission,
+    quota: () =>
+      create(
+        `${label}官方 API 配额不足，请稍后重试或调整配额预算。`,
+        "quota",
+        true,
+      ),
+    rateLimited: () => create(`${label}请求触发配额限制。`, "quota", true),
+    serverUnavailable: () =>
+      create(`${label}官方 API 暂时不可用。`, "network", true),
+    requestFailed: () =>
+      create(`${label}官方 API 请求失败。`, "network", false),
+  };
+}
+
 export function extractApiErrorReason(payload: unknown): string | undefined {
   const error = payload as { error?: { errors?: unknown[] } } | undefined;
   if (

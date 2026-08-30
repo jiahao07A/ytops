@@ -6,6 +6,7 @@ import {
 } from "./config.js";
 import {
   classifyHttpResponseError,
+  httpErrorFactoriesFor,
   RETENTION_FAILURE_KINDS,
   type RetentionFailureKind,
   RetentionServiceError,
@@ -237,40 +238,31 @@ function classifyRetentionResponseError(
   status: number,
   payload: unknown,
 ): RetentionServiceError {
-  return classifyHttpResponseError(status, payload, {
-    credential: () =>
-      new RetentionServiceError(
-        "留存曲线 OAuth 凭据无效或已过期，请重新完成授权。",
-        "credential",
-        false,
-      ),
-    quota: () =>
-      new RetentionServiceError(
-        "Analytics 官方 API 配额不足，请稍后重试或调整配额预算。",
-        "quota",
-        true,
-      ),
-    permission: () =>
-      new RetentionServiceError(
-        "当前 OAuth 授权不包含 Analytics 读取权限或频道不具备该资格。",
-        "permission",
-        false,
-      ),
-    rateLimited: () =>
-      new RetentionServiceError("Analytics 请求触发配额限制。", "quota", true),
-    serverUnavailable: () =>
-      new RetentionServiceError(
-        "Analytics 官方 API 暂时不可用。",
-        "network",
-        true,
-      ),
-    requestFailed: () =>
-      new RetentionServiceError(
-        "Analytics 官方 API 请求失败。",
-        "network",
-        false,
-      ),
-  }) as RetentionServiceError;
+  return classifyHttpResponseError(
+    status,
+    payload,
+    httpErrorFactoriesFor(
+      (message, kind, retryable) =>
+        new RetentionServiceError(
+          message,
+          kind as RetentionFailureKind,
+          retryable,
+        ),
+      "Analytics",
+      () =>
+        new RetentionServiceError(
+          "留存曲线 OAuth 凭据无效或已过期，请重新完成授权。",
+          "credential",
+          false,
+        ),
+      () =>
+        new RetentionServiceError(
+          "当前 OAuth 授权不包含 Analytics 读取权限或频道不具备该资格。",
+          "permission",
+          false,
+        ),
+    ),
+  ) as RetentionServiceError;
 }
 
 export type RetentionRunStatus =

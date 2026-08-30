@@ -15,7 +15,9 @@ import {
 } from "./config.js";
 import {
   AnalyticsServiceError,
+  type AnalyticsFailureKind,
   classifyHttpResponseError,
+  httpErrorFactoriesFor,
   UserInputError,
 } from "./errors.js";
 import {
@@ -1056,40 +1058,31 @@ function classifyAnalyticsResponseError(
   status: number,
   payload: unknown,
 ): AnalyticsServiceError {
-  return classifyHttpResponseError(status, payload, {
-    credential: () =>
-      new AnalyticsServiceError(
-        "Analytics OAuth 凭据无效或已过期，请重新完成授权。",
-        "credential",
-        false,
-      ),
-    quota: () =>
-      new AnalyticsServiceError(
-        "Analytics 官方 API 配额不足，请稍后重试或调整配额预算。",
-        "quota",
-        true,
-      ),
-    permission: () =>
-      new AnalyticsServiceError(
-        "当前 OAuth 授权不包含 Analytics 读取权限或频道不具备该资格。",
-        "permission",
-        false,
-      ),
-    rateLimited: () =>
-      new AnalyticsServiceError("Analytics 请求触发配额限制。", "quota", true),
-    serverUnavailable: () =>
-      new AnalyticsServiceError(
-        "Analytics 官方 API 暂时不可用。",
-        "network",
-        true,
-      ),
-    requestFailed: () =>
-      new AnalyticsServiceError(
-        "Analytics 官方 API 请求失败。",
-        "network",
-        false,
-      ),
-  }) as AnalyticsServiceError;
+  return classifyHttpResponseError(
+    status,
+    payload,
+    httpErrorFactoriesFor(
+      (message, kind, retryable) =>
+        new AnalyticsServiceError(
+          message,
+          kind as AnalyticsFailureKind,
+          retryable,
+        ),
+      "Analytics",
+      () =>
+        new AnalyticsServiceError(
+          "Analytics OAuth 凭据无效或已过期，请重新完成授权。",
+          "credential",
+          false,
+        ),
+      () =>
+        new AnalyticsServiceError(
+          "当前 OAuth 授权不包含 Analytics 读取权限或频道不具备该资格。",
+          "permission",
+          false,
+        ),
+    ),
+  ) as AnalyticsServiceError;
 }
 
 function parseAnalyticsResponse(
