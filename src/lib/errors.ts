@@ -40,7 +40,17 @@ export type InventoryFailureKind =
   | "credential"
   | "conflict";
 
-export class InventoryServiceError extends Error {
+/**
+ * 带 failure kind 与可重试标记的服务错误公共基类：CLI 的错误归一化只依赖
+ * 这三个字段，新增服务错误类时继承它即可获得一致的 JSON 错误面。
+ */
+export abstract class KindedServiceError extends Error {
+  abstract readonly code: string;
+  abstract readonly kind: string;
+  abstract readonly retryable: boolean;
+}
+
+export class InventoryServiceError extends KindedServiceError {
   readonly code = "INVENTORY_SERVICE";
 
   constructor(
@@ -62,7 +72,7 @@ export type AnalyticsFailureKind =
   | "not-ready"
   | "conflict";
 
-export class AnalyticsServiceError extends Error {
+export class AnalyticsServiceError extends KindedServiceError {
   readonly code = "ANALYTICS_SERVICE";
 
   constructor(
@@ -83,7 +93,7 @@ export type ReportingFailureKind =
   | "invalid-response"
   | "credential";
 
-export class ReportingServiceError extends Error {
+export class ReportingServiceError extends KindedServiceError {
   readonly code = "REPORTING_SERVICE";
 
   constructor(
@@ -104,7 +114,7 @@ export type CommentsFailureKind =
   | "invalid-response"
   | "unavailable";
 
-export class CommentsServiceError extends Error {
+export class CommentsServiceError extends KindedServiceError {
   readonly code = "COMMENTS_SERVICE";
 
   constructor(
@@ -117,15 +127,18 @@ export class CommentsServiceError extends Error {
   }
 }
 
-export type RetentionFailureKind =
-  | "quota"
-  | "network"
-  | "permission"
-  | "invalid-response"
-  | "credential"
-  | "not-ready";
+export const RETENTION_FAILURE_KINDS = [
+  "quota",
+  "network",
+  "permission",
+  "invalid-response",
+  "credential",
+  "not-ready",
+] as const;
 
-export class RetentionServiceError extends Error {
+export type RetentionFailureKind = (typeof RETENTION_FAILURE_KINDS)[number];
+
+export class RetentionServiceError extends KindedServiceError {
   readonly code = "RETENTION_SERVICE";
 
   constructor(

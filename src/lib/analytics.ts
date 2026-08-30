@@ -1,5 +1,3 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import {
@@ -14,6 +12,13 @@ import {
   type ChannelOperationsConfig,
 } from "./config.js";
 import { AnalyticsServiceError, UserInputError } from "./errors.js";
+import {
+  isFsCode,
+  isRecord,
+  loadValidatedJsonFile,
+  readJsonResponse,
+  saveJsonFile,
+} from "./fs-json.js";
 import { getInventoryStatus } from "./inventory.js";
 import {
   getChannelAccessToken,
@@ -145,7 +150,7 @@ export class GoogleAnalyticsProvider implements AnalyticsProvider {
       );
     }
 
-    const payload = await readJson(response);
+    const payload = await readJsonResponse(response);
     if (!response.ok) {
       throw classifyAnalyticsResponseError(response.status, payload);
     }
@@ -218,7 +223,7 @@ interface AnalyticsPaths {
   state: string;
   data: string;
   evidence: string;
-  config: ChannelOperationsConfig;
+  operationsConfig: ChannelOperationsConfig;
 }
 
 const rowSchema = z
@@ -405,45 +410,29 @@ function defaultData(
   };
 }
 
-async function loadJson<T>(
+function loadJson<T>(
   path: string,
   fallback: T,
   schema: z.ZodType<T>,
 ): Promise<T> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    const validated = schema.safeParse(parsed);
-    if (!validated.success) {
-      throw new AnalyticsServiceError(
+  return loadValidatedJsonFile(path, fallback, schema, {
+    corrupt: () =>
+      new AnalyticsServiceError(
         "本机 Analytics 数据文件格式无效，请保留原始证据后重新同步。",
         "invalid-response",
         false,
-      );
-    }
-    return validated.data;
-  } catch (error) {
-    if (error instanceof AnalyticsServiceError) {
-      throw error;
-    }
-    if (isFsCode(error, "ENOENT")) {
-      return fallback;
-    }
-    throw new AnalyticsServiceError(
-      "无法读取本机 Analytics 数据文件。",
-      "network",
-      true,
-    );
-  }
+      ),
+    unreadable: () =>
+      new AnalyticsServiceError(
+        "无法读取本机 Analytics 数据文件。",
+        "network",
+        true,
+      ),
+  });
 }
 
 async function saveJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await rename(temporaryPath, path);
+  await saveJsonFile(path, value);
 }
 
 async function resolveAnalyticsPaths(
@@ -464,7 +453,7 @@ async function resolveAnalyticsPaths(
     state: resolve(root, "sync-state.json"),
     data: resolve(root, "data.json"),
     evidence: resolve(root, "evidence"),
-    config: validated.config,
+    operationsConfig: validated.config,
   };
 }
 
@@ -658,7 +647,10 @@ export async function syncAnalytics(
     throw new UserInputError("Analytics 指标必须来自首期支持的核心指标目录。");
   }
   const paths = await resolveAnalyticsPaths(configPath, input.channelId);
-  const revenueOptIn = resolveRevenueOptIn(paths.config, input.channelId);
+  const revenueOptIn = resolveRevenueOptIn(
+    paths.operationsConfig,
+    input.channelId,
+  );
   // 货币 opt-in 开启时，核心两阶段自动携带收入指标并以显式 USD 请求；
   // 观众画像组不携带收入，避免把估算值混入结构口径（ADR 0003）。
   const syncMetrics: AnalyticsMetric[] = revenueOptIn
@@ -1201,24 +1193,4 @@ function parseAnalyticsResponse(
       : { coverage: "complete" as const }),
     ...(nextStartIndex === undefined ? {} : { nextStartIndex }),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isFsCode(error: unknown, code: string): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === code
-  );
-}
-
-async function readJson(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    return undefined;
-  }
 }

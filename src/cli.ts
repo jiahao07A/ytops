@@ -20,13 +20,9 @@ import {
 } from "./lib/config.js";
 import { runDoctor } from "./lib/doctor.js";
 import {
-  AnalyticsServiceError,
   ExternalCommandError,
-  InventoryServiceError,
+  KindedServiceError,
   OAuthServiceError,
-  CommentsServiceError,
-  ReportingServiceError,
-  RetentionServiceError,
   UserInputError,
 } from "./lib/errors.js";
 import {
@@ -680,6 +676,20 @@ function safeErrorMessage(message: string): string {
     : "操作失败。为保护凭据，敏感路径已隐藏。";
 }
 
+/**
+ * 读取类命令共用的刷新模式解析：--refresh 失败回退最后可用数据，
+ * --latest 失败直接抛错；两者互斥。
+ */
+function resolveFreshnessMode(
+  refresh: boolean | undefined,
+  latest: boolean | undefined,
+): "cached" | "refresh" | "latest" {
+  if (refresh && latest) {
+    throw new UserInputError("--refresh 与 --latest 只能选择一个。");
+  }
+  return latest ? "latest" : refresh ? "refresh" : "cached";
+}
+
 function readableError(error: unknown): ErrorPayload["error"] {
   if (error instanceof CommanderError) {
     return {
@@ -714,35 +724,7 @@ function readableError(error: unknown): ErrorPayload["error"] {
   if (error instanceof OAuthServiceError) {
     return { code: error.code, message: safeErrorMessage(error.message) };
   }
-  if (error instanceof InventoryServiceError) {
-    return {
-      code: error.code,
-      message: safeErrorMessage(error.message),
-      details: `类别：${error.kind}；可重试：${error.retryable ? "是" : "否"}`,
-    };
-  }
-  if (error instanceof AnalyticsServiceError) {
-    return {
-      code: error.code,
-      message: safeErrorMessage(error.message),
-      details: `类别：${error.kind}；可重试：${error.retryable ? "是" : "否"}`,
-    };
-  }
-  if (error instanceof ReportingServiceError) {
-    return {
-      code: error.code,
-      message: safeErrorMessage(error.message),
-      details: `类别：${error.kind}；可重试：${error.retryable ? "是" : "否"}`,
-    };
-  }
-  if (error instanceof CommentsServiceError) {
-    return {
-      code: error.code,
-      message: safeErrorMessage(error.message),
-      details: `类别：${error.kind}；可重试：${error.retryable ? "是" : "否"}`,
-    };
-  }
-  if (error instanceof RetentionServiceError) {
+  if (error instanceof KindedServiceError) {
     return {
       code: error.code,
       message: safeErrorMessage(error.message),
@@ -1459,14 +1441,7 @@ channelOperations
       maxAgeHours?: string;
       derived?: boolean;
     }) => {
-      if (options.refresh && options.latest) {
-        throw new UserInputError("--refresh 与 --latest 只能选择一个。 ");
-      }
-      const mode = options.latest
-        ? "latest"
-        : options.refresh
-          ? "refresh"
-          : "cached";
+      const mode = resolveFreshnessMode(options.refresh, options.latest);
       return execute("频道 Analytics 新鲜度查询", async () => {
         const result = await readAnalyticsFacts(
           options.config,
@@ -1784,14 +1759,7 @@ channelOperations
       latest?: boolean;
       maxAgeHours?: string;
     }) => {
-      if (options.refresh && options.latest) {
-        throw new UserInputError("--refresh 与 --latest 只能选择一个。 ");
-      }
-      const mode = options.latest
-        ? "latest"
-        : options.refresh
-          ? "refresh"
-          : "cached";
+      const mode = resolveFreshnessMode(options.refresh, options.latest);
       return execute("视频留存曲线", () =>
         readRetentionCurve(
           options.config,

@@ -1,10 +1,19 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { validateChannelOperationsConfig } from "./config.js";
-import { RetentionServiceError, UserInputError } from "./errors.js";
-import type { RetentionFailureKind } from "./errors.js";
+import {
+  RETENTION_FAILURE_KINDS,
+  type RetentionFailureKind,
+  RetentionServiceError,
+  UserInputError,
+} from "./errors.js";
+import {
+  isFsCode,
+  isRecord,
+  loadValidatedJsonFile,
+  readJsonResponse,
+  saveJsonFile,
+} from "./fs-json.js";
 import { getInventoryStatus } from "./inventory.js";
 import {
   getChannelAccessToken,
@@ -93,7 +102,7 @@ export class GoogleRetentionProvider implements RetentionProvider {
           true,
         );
       }
-      const payload = await readJson(response);
+      const payload = await readJsonResponse(response);
       if (!response.ok) {
         throw classifyRetentionResponseError(response.status, payload);
       }
@@ -450,45 +459,25 @@ function defaultData(state: RetentionSyncState): RetentionData {
   };
 }
 
-async function loadJson<T>(
+function loadJson<T>(
   path: string,
   fallback: T,
   schema: z.ZodType<T>,
 ): Promise<T> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    const validated = schema.safeParse(parsed);
-    if (!validated.success) {
-      throw new RetentionServiceError(
+  return loadValidatedJsonFile(path, fallback, schema, {
+    corrupt: () =>
+      new RetentionServiceError(
         "本机留存曲线数据文件格式无效，请保留原始证据后重新同步。",
         "invalid-response",
         false,
-      );
-    }
-    return validated.data;
-  } catch (error) {
-    if (error instanceof RetentionServiceError) {
-      throw error;
-    }
-    if (isFsCode(error, "ENOENT")) {
-      return fallback;
-    }
-    throw new RetentionServiceError(
-      "无法读取本机留存曲线数据文件。",
-      "network",
-      true,
-    );
-  }
-}
-
-async function saveJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
+      ),
+    unreadable: () =>
+      new RetentionServiceError(
+        "无法读取本机留存曲线数据文件。",
+        "network",
+        true,
+      ),
   });
-  await rename(temporaryPath, path);
 }
 
 async function resolveRetentionPaths(
@@ -516,26 +505,6 @@ function toDateOnly(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isFsCode(error: unknown, code: string): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === code
-  );
-}
-
-async function readJson(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    return undefined;
-  }
-}
-
 async function saveRetentionEvidence(
   paths: RetentionPaths,
   request: RetentionCurveRequest,
@@ -547,7 +516,7 @@ async function saveRetentionEvidence(
     paths.evidence,
     `${stamp}-retention-${request.videoId}-${Date.now()}.json`,
   );
-  await saveJson(path, {
+  await saveJsonFile(path, {
     source: "youtube-analytics-api",
     kind: "retention-curve",
     request: {
@@ -620,7 +589,7 @@ async function finishRetentionFailure(
     updatedAt: now,
     error: normalized,
   };
-  await saveJson(paths.state, nextState);
+  await saveJsonFile(paths.state, nextState);
   return { channelId: state.channelId, state: nextState, data };
 }
 
@@ -725,8 +694,8 @@ async function runRetentionFetch(
         dataAsOf,
         updatedAt: fetchedAt,
       };
-      await saveJson(input.paths.data, data);
-      await saveJson(input.paths.state, state);
+      await saveJsonFile(input.paths.data, data);
+      await saveJsonFile(input.paths.state, state);
       queue.shift();
       workUnits += 1;
     }
@@ -759,8 +728,8 @@ async function runRetentionFetch(
       updatedAt: completedAt,
       dataAsOf: data.dataAsOf ?? completedAt,
     };
-    await saveJson(input.paths.state, state);
-    await saveJson(input.paths.data, data);
+    await saveJsonFile(input.paths.state, state);
+    await saveJsonFile(input.paths.data, data);
     return { channelId: input.channelId, state, data };
   } catch (error) {
     return finishRetentionFailure(
@@ -848,7 +817,7 @@ export async function syncRetention(
     }
   }
   state.pendingVideoIds = fetchQueue;
-  await saveJson(paths.state, state);
+  await saveJsonFile(paths.state, state);
 
   return runRetentionFetch({
     channelId: input.channelId,
@@ -943,13 +912,8 @@ function isUsableCurve(curve: RetentionCurveRecord | undefined): boolean {
 }
 
 function supportedRetentionKind(kind: string): RetentionFailureKind {
-  return kind === "quota" ||
-    kind === "network" ||
-    kind === "permission" ||
-    kind === "invalid-response" ||
-    kind === "credential" ||
-    kind === "not-ready"
-    ? kind
+  return (RETENTION_FAILURE_KINDS as readonly string[]).includes(kind)
+    ? (kind as RetentionFailureKind)
     : "network";
 }
 
