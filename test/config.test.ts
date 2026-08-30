@@ -6,8 +6,11 @@ import lockfile from "proper-lockfile";
 import { describe, expect, it } from "vitest";
 import {
   initializeChannelOperationsConfig,
+  resolveRevenueOptIn,
   updateAnalysisProfileOperationsConfig,
+  updateChannelOperationsConfig,
   updateGlobalChannelOperationsConfig,
+  validateChannelOperationsConfig,
 } from "../src/lib/config.js";
 
 function wait(milliseconds: number): Promise<void> {
@@ -350,6 +353,41 @@ describe("公开检索 cookie 配置", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(readFileSync(configPath, "utf8")).toBe(savedConfig);
+    } finally {
+      if (existsSync(configPath)) {
+        unlinkSync(configPath);
+      }
+    }
+  });
+
+  it("货币分析权限 opt-in 默认关闭，按全局与频道覆盖解析", async () => {
+    const configPath = resolve(tmpdir(), `ytops-config-${randomUUID()}.json`);
+    const channelId = "UC1111111111111111111111";
+    try {
+      await initializeChannelOperationsConfig(configPath, false);
+      const initial = await validateChannelOperationsConfig(configPath);
+      expect(resolveRevenueOptIn(initial.config, channelId)).toBe(false);
+
+      await updateGlobalChannelOperationsConfig(configPath, {
+        analytics: { revenueOptIn: true },
+      });
+      const globalEnabled = await validateChannelOperationsConfig(configPath);
+      expect(resolveRevenueOptIn(globalEnabled.config, channelId)).toBe(true);
+
+      await updateChannelOperationsConfig(configPath, {
+        channelId,
+        analytics: { revenueOptIn: false },
+      });
+      const channelDisabled = await validateChannelOperationsConfig(configPath);
+      expect(resolveRevenueOptIn(channelDisabled.config, channelId)).toBe(
+        false,
+      );
+      expect(
+        resolveRevenueOptIn(
+          channelDisabled.config,
+          "UC2222222222222222222222",
+        ),
+      ).toBe(true);
     } finally {
       if (existsSync(configPath)) {
         unlinkSync(configPath);

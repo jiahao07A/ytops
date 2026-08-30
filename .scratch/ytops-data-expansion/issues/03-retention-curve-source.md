@@ -1,11 +1,18 @@
 # 03: 留存曲线数据源（同步 + 按需查询）
 
 Type: task
-Status: open
-Label: ready-for-agent
+Status: resolved
 Blocked by: none
 
 **What to build:** 新增留存曲线只读数据源。运营者执行留存同步时，首次对库存全部视频建立全历史留存曲线（按视频清单分页推进、断点续传，复用既有同步任务的检查点模式），后续每轮只处理新发现的视频；留存曲线为单视频全历史、固定比例横轴约一百个点、数值可超过 1 并如实呈现。另有按需事实查询命令返回单个视频的留存曲线（支持最后可用数据与强制最新查询语义），以及状态命令查看同步进度。
+
+## Answer
+
+- 由并行 subagent 在独立 worktree 实现,4 个提交 rebase 后快进合并进 main;合并后全树 306 测试通过。
+- `ops channel retention-sync/retention-status/retention-read` 三件套落地;库层测试 14 + CLI 测试 4,覆盖断点续传、增量、隐私阈值省略、>1 点如实呈现、--refresh 回退与 --latest 不回退。
+- 覆盖矩阵新增 retention.curve 条目;证据不含凭据样文本;README/skills 文档合同与中文门禁通过。
+- 自由裁量:官方响应缺 rows 视为无数据点(留存场景隐私阈值整段省略属常态);证据引用存于每条曲线记录;Inventory 未完成时同步抛 not-ready。
+- 遗留:maxResults/配额与官方单页上限需真实频道探针确认(与工票 07 收口一致)。
 
 - [ ] 首次留存同步处理库存全部视频；中断后从检查点恢复，不重复拉取已完成视频
 - [ ] 后续同步只请求新发现的视频

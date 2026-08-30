@@ -365,6 +365,14 @@ const syncSettingsSchema = z
   })
   .strict();
 
+const analyticsSettingsSchema = z
+  .object({
+    revenueOptIn: z
+      .boolean({ error: "货币分析权限 opt-in 必须是 true 或 false。" })
+      .default(false),
+  })
+  .strict();
+
 const analysisProfileSchema = z
   .object({
     metrics: z.array(analysisMetricSchema).min(1, "至少提供一个分析指标。"),
@@ -387,6 +395,7 @@ const channelConfigSchema = z
       .boolean({ error: "频道启用状态必须是 true 或 false。" })
       .default(true),
     sync: syncSettingsSchema.partial().optional(),
+    analytics: analyticsSettingsSchema.optional(),
     rawEvidenceRetentionDays: z
       .number({ error: "频道原始证据保留天数必须是数字。" })
       .int("频道原始证据保留天数必须是整数。")
@@ -423,6 +432,7 @@ export const channelOperationsConfigSchema = z
         dataDirectory: dataDirectorySchema,
         sync: syncSettingsSchema,
         cookies: cookiesSettingsSchema.optional(),
+        analytics: analyticsSettingsSchema.optional(),
         rawEvidenceRetentionDays: integerSettingSchema(
           "原始证据保留天数",
           1,
@@ -443,6 +453,7 @@ export interface GlobalConfigOverrides {
   dataDirectory?: string;
   sync?: Partial<ChannelOperationsConfig["global"]["sync"]>;
   cookies?: ChannelOperationsConfig["global"]["cookies"] | null;
+  analytics?: { revenueOptIn?: boolean };
   rawEvidenceRetentionDays?: number;
 }
 
@@ -450,6 +461,7 @@ export interface ChannelConfigOverrides {
   channelId: string;
   enabled?: boolean;
   sync?: Partial<ChannelOperationsConfig["global"]["sync"]>;
+  analytics?: { revenueOptIn?: boolean };
   rawEvidenceRetentionDays?: number;
 }
 
@@ -588,6 +600,14 @@ export function explainChannelOperationsConfig(): {
           persistentCommand: `${setGlobalConfig} --cookies-from-browser <spec>`,
         },
         {
+          name: "global.analytics.revenueOptIn",
+          description:
+            "显式开启货币分析能力（总收入、RPM）。默认关闭；开启后下次授权才会申请货币只读 scope。",
+          rule: "必须是 true 或 false；默认值为 false；频道级覆盖优先于全局值。",
+          temporaryCommand: `${validateConfig} --channel <channel-id>`,
+          persistentCommand: `${setGlobalConfig} --analytics-revenue-opt-in <true|false>`,
+        },
+        {
           name: "global.rawEvidenceRetentionDays",
           description: "原始证据在本机保留的默认天数。",
           rule: "必须是 1 到 3650 之间的整数，默认值为 365。",
@@ -643,6 +663,13 @@ export function explainChannelOperationsConfig(): {
           persistentCommand: `${setChannel} --channel-initial-backfill-days <days>`,
         },
         {
+          name: "channels[].analytics.revenueOptIn",
+          description: "覆盖该频道的货币分析能力开关。",
+          rule: "必须是 true 或 false；未设置时继承全局值。",
+          temporaryCommand: `${validateChannel} --channel-analytics-revenue-opt-in <true|false>`,
+          persistentCommand: `${setChannel} --channel-analytics-revenue-opt-in <true|false>`,
+        },
+        {
           name: "channels[].rawEvidenceRetentionDays",
           description: "覆盖该频道的原始证据保留期。",
           rule: "必须是 1 到 3650 之间的整数；未设置时继承全局值。",
@@ -672,7 +699,7 @@ export function explainChannelOperationsConfig(): {
         {
           name: "analysisProfiles.<name>.dimensions",
           description: "要请求的维度列表。",
-          rule: "支持 day、video、trafficSourceType、deviceType、country、ageGroup、gender；CLI 使用逗号分隔列表。",
+          rule: "支持 day、video、trafficSourceType、deviceType、country、ageGroup、gender、subscribedStatus；CLI 使用逗号分隔列表。",
           temporaryCommand: validateNewProfile,
           persistentCommand: setNewProfile,
         },
@@ -802,6 +829,16 @@ export function applyGlobalConfigOverrides(
       ...(overrides.cookies === undefined
         ? {}
         : { cookies: overrides.cookies ?? undefined }),
+      ...(overrides.analytics === undefined
+        ? {}
+        : {
+            analytics: {
+              revenueOptIn:
+                overrides.analytics.revenueOptIn ??
+                config.global.analytics?.revenueOptIn ??
+                false,
+            },
+          }),
       rawEvidenceRetentionDays:
         overrides.rawEvidenceRetentionDays ??
         config.global.rawEvidenceRetentionDays,
@@ -829,6 +866,16 @@ export function applyChannelConfigOverrides(
           },
         }
       : {}),
+    ...(overrides.analytics === undefined
+      ? {}
+      : {
+          analytics: {
+            revenueOptIn:
+              overrides.analytics.revenueOptIn ??
+              existingChannel?.analytics?.revenueOptIn ??
+              false,
+          },
+        }),
     ...(overrides.rawEvidenceRetentionDays === undefined
       ? {}
       : { rawEvidenceRetentionDays: overrides.rawEvidenceRetentionDays }),
@@ -912,11 +959,26 @@ export function applyChannelOperationsConfigOverrides(
   return effectiveConfig;
 }
 
+export function resolveRevenueOptIn(
+  config: ChannelOperationsConfig,
+  channelId: string,
+): boolean {
+  const channel = config.channels.find(
+    (entry) => entry.channelId === channelId.trim(),
+  );
+  return (
+    channel?.analytics?.revenueOptIn ??
+    config.global.analytics?.revenueOptIn ??
+    false
+  );
+}
+
 function hasGlobalOverrides(overrides: GlobalConfigOverrides): boolean {
   return (
     overrides.dataDirectory !== undefined ||
     overrides.rawEvidenceRetentionDays !== undefined ||
     overrides.cookies !== undefined ||
+    overrides.analytics !== undefined ||
     Object.keys(overrides.sync ?? {}).length > 0
   );
 }
@@ -925,6 +987,7 @@ function hasChannelOverrides(overrides: ChannelConfigOverrides): boolean {
   return (
     overrides.enabled !== undefined ||
     overrides.rawEvidenceRetentionDays !== undefined ||
+    overrides.analytics !== undefined ||
     Object.keys(overrides.sync ?? {}).length > 0
   );
 }
